@@ -1,12 +1,150 @@
 from dataclasses import dataclass
 
-@dataclass(frozen = True)
+
+@dataclass(frozen=True)
 class Field:
     position: int
     source_name: str
     name: str
     data_type: str
     max_length: int
+
+
+ORIGINATION_SCHEMA = (
+    Field(1, "Credit Score", "credit_score", "numeric", 4),
+    Field(2, "First Payment Date", "first_payment_date", "date_yyyymm", 6),
+    Field(
+        3,
+        "First Time Homebuyer Flag",
+        "first_time_homebuyer_flag",
+        "string",
+        1,
+    ),
+    Field(4, "Maturity Date", "maturity_date", "date_yyyymm", 6),
+    Field(
+        5,
+        "Metropolitan Statistical Area (MSA) Or Metropolitan Division",
+        "msa",
+        "string",
+        5,
+    ),
+    Field(
+        6,
+        "Mortgage Insurance Percentage (MI %)",
+        "mi_percentage",
+        "numeric",
+        3,
+    ),
+    Field(7, "Number of Units", "number_of_units", "numeric", 2),
+    Field(8, "Occupancy Status", "occupancy_status", "string", 1),
+    Field(
+        9,
+        "Original Combined Loan-to-Value (CLTV)",
+        "original_cltv",
+        "numeric",
+        4,
+    ),
+    Field(
+        10,
+        "Original Debt-to-Income (DTI) Ratio",
+        "original_dti",
+        "numeric",
+        3,
+    ),
+    Field(11, "Original UPB", "original_upb", "numeric", 12),
+    Field(
+        12,
+        "Original Loan-to-Value (LTV)",
+        "original_ltv",
+        "numeric",
+        4,
+    ),
+    Field(
+        13,
+        "Original Interest Rate",
+        "original_interest_rate",
+        "numeric",
+        8,
+    ),
+    Field(14, "Channel", "channel", "string", 1),
+    Field(
+        15,
+        "Prepayment Penalty Mortgage (PPM) Flag",
+        "prepayment_penalty_flag",
+        "string",
+        1,
+    ),
+    Field(
+        16,
+        "Amortization Type",
+        "amortization_type",
+        "string",
+        3,
+    ),
+    Field(17, "Property State", "property_state", "string", 2),
+    Field(18, "Property Type", "property_type", "string", 2),
+    Field(19, "Postal Code", "postal_code", "string", 5),
+    Field(20, "Loan Identifier", "loan_id", "string", 12),
+    Field(21, "Loan Purpose", "loan_purpose", "string", 1),
+    Field(
+        22,
+        "Original Loan Term",
+        "original_loan_term",
+        "numeric",
+        3,
+    ),
+    Field(
+        23,
+        "Number of Borrowers",
+        "number_of_borrowers",
+        "numeric",
+        2,
+    ),
+    Field(24, "Seller Name", "seller_name", "string", 60),
+    Field(
+        25,
+        "Super Conforming Flag",
+        "super_conforming_flag",
+        "string",
+        1,
+    ),
+    Field(
+        26,
+        "Pre-HARP Loan Identifier",
+        "pre_harp_loan_id",
+        "string",
+        12,
+    ),
+    Field(
+        27,
+        "Special Eligibility Program",
+        "special_eligibility_program",
+        "string",
+        1,
+    ),
+    Field(28, "HARP Indicator", "harp_indicator", "string", 1),
+    Field(
+        29,
+        "Property Valuation Method",
+        "property_valuation_method",
+        "string",
+        1,
+    ),
+    Field(
+        30,
+        "Interest Only Indicator",
+        "interest_only_indicator",
+        "string",
+        1,
+    ),
+    Field(
+        31,
+        "VantageScore 4.0",
+        "vantage_score_4",
+        "numeric",
+        4,
+    ),
+)
 
 PERFORMANCE_SCHEMA = (
     Field(1, "Loan Identifier", "loan_id", "string", 12),
