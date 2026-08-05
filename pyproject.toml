@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name = "mortgage-credit-risk"
+version = "0.1.0"
+description = "Production-grade mortgage credit risk modelling framework"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "pyarrow>=17.0",
+    "PyYAML>=6.0",
+]
+
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+    "jupyter>=1.1",
+]
+
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
