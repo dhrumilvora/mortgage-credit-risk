@@ -3,14 +3,21 @@ import pandas as pd
 from credit_risk.data.schemas import (
     PERFORMANCE_SCHEMA,
     ORIGINATION_SCHEMA,
+    ORIGINATION_RAW_DTYPES,
+    PERFORMANCE_RAW_DTYPES,
     Field,
     get_column_names,
 )
+from collections.abc import Iterator
 
 
 def _read_pipe_delimited(
-    path: str | Path, schema: tuple[Field, ...], nrows: int | None = None
+    path: str | Path,
+    schema: tuple[Field, ...],
+    dtypes: dict[str, str] | None = None,
+    nrows: int | None = None,
 ) -> pd.DataFrame:
+
     path = Path(path)
 
     if not path.is_file():
@@ -23,6 +30,7 @@ def _read_pipe_delimited(
         sep="|",
         header=None,
         names=columns,
+        dtype=dtypes,
         nrows=nrows,
         low_memory=False,
     )
@@ -37,9 +45,43 @@ def _read_pipe_delimited(
     return df
 
 
-def read_performance(path: str | Path, nrows: int | None = None) -> pd.DataFrame:
-    return _read_pipe_delimited(path=path, schema=PERFORMANCE_SCHEMA, nrows=nrows)
+def iter_performance(
+    path: str | Path, chunksize: int = 250000
+) -> Iterator[pd.DataFrame]:
+    if not path.is_file():
+        raise FileNotFoundError(f"File not found: {path}")
+    yield from pd.read_csv(
+        path,
+        sep="|",
+        header=None,
+        names=get_column_names(PERFORMANCE_SCHEMA),
+        dtype=PERFORMANCE_RAW_DTYPES,
+        chunksize=chunksize,
+        low_memory=False,
+    )
 
 
-def read_origination(path: str | Path, nrows: int | None = None) -> pd.DataFrame:
-    return _read_pipe_delimited(path=path, schema=ORIGINATION_SCHEMA, nrows=nrows)
+def read_performance(
+    path: str | Path,
+    nrows: int | None = None,
+) -> pd.DataFrame:
+
+    return _read_pipe_delimited(
+        path=path,
+        schema=PERFORMANCE_SCHEMA,
+        dtypes=PERFORMANCE_RAW_DTYPES,
+        nrows=nrows,
+    )
+
+
+def read_origination(
+    path: str | Path,
+    nrows: int | None = None,
+) -> pd.DataFrame:
+
+    return _read_pipe_delimited(
+        path=path,
+        schema=ORIGINATION_SCHEMA,
+        dtypes=ORIGINATION_RAW_DTYPES,
+        nrows=nrows,
+    )

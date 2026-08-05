@@ -9,6 +9,12 @@ class Field:
     data_type: str
     max_length: int
 
+    @property
+    def pandas_raw_dtype(self) -> str | None:
+        if self.data_type in {"string", "data_yyyymm"}:
+            return "string"
+        return None
+
 
 ORIGINATION_SCHEMA = (
     Field(1, "Credit Score", "credit_score", "numeric", 4),
@@ -304,6 +310,33 @@ PERFORMANCE_SCHEMA = (
         12,
     ),
 )
+
+
+ORIGINATION_RAW_DTYPES = {
+    "first_payment_date": "string",
+    "maturity_date": "string",
+    "msa": "string",
+    "postal_code": "string",
+    "loan_id": "string",
+    "pre_harp_loan_id": "string",
+}
+
+PERFORMANCE_RAW_DTYPES = {
+    "loan_id": "string",
+    "period": "string",
+    # Preserve Freddie's exact status encoding.
+    "current_loan_delinquency_status": "string",
+    "defect_settlement_date": "string",
+    "modification_flag": "string",
+    "zero_balance_code": "string",
+    "zero_balance_effective_date": "string",
+    "ddlpi": "string",
+    "interest_rate_step_indicator": "string",
+    "payment_deferral_flag": "string",
+    "delinquency_due_to_disaster": "string",
+    "borrower_assistance_plan": "string",
+    "mi_cancellation_indicator": "string",
+}
 
 
 def get_column_names(schema: tuple[Field, ...]) -> list[str]:
