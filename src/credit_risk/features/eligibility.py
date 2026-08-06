@@ -1,3 +1,4 @@
+IDENTIFIER_FEATURE = ["loan_id"]
 BASELINE_FEATURES = [
     # Borrower attributes
     "credit_score",
@@ -33,7 +34,6 @@ CHALLENGER_FEATURES = [
 
 
 NON_PREDICTIVE_FIELDS = [
-    "loan_id",
     "pre_harp_loan_id",
 ]
 
@@ -61,7 +61,8 @@ def validate_baseline_features(columns) -> None:
     """Validate that all required baseline features are available."""
 
     available = set(columns)
-    required = set(BASELINE_FEATURES)
+    required_cols = BASELINE_FEATURES + IDENTIFIER_FEATURE
+    required = set(required_cols)
 
     missing = sorted(required - available)
 

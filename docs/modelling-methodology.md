@@ -426,3 +426,197 @@ This phase will address:
 
 No transformation should change the economic meaning of an origination
 field without an explicit methodological justification.
+
+
+# Development and Validation Strategy
+
+## Validation Objective
+
+Model validation must estimate how well the serious-delinquency model
+generalizes beyond the observations used to estimate model parameters.
+
+The validation design must also account for the low event rate in the
+development population.
+
+The final modelling cohort contains:
+
+| Population | Loans | Serious-Delinquency Events | Event Rate |
+|---|---:|---:|---:|
+| Development cohort | 47,255 | 343 | 0.726% |
+
+Because serious delinquency is rare, unnecessarily fragmenting the current
+sample would materially reduce the number of positive observations available
+for model estimation and validation.
+
+
+## Temporal Coverage of the Development Sample
+
+`first_payment_date` was evaluated as a potential basis for temporal
+validation.
+
+Observed first-payment dates technically range from February 2015 to May
+2017. However, the distribution is highly concentrated between March 2015
+and February 2016.
+
+Observations after this period are extremely sparse and therefore do not
+provide a sufficiently sized independent population for meaningful
+out-of-time model evaluation.
+
+A small temporal tail from the same development extract will therefore not
+be treated as a true out-of-time test population.
+
+
+## Development Split
+
+The current cohort will be divided into:
+
+- **Training population**
+- **Validation population**
+
+using an approximately **80% / 20% stratified split**.
+
+Stratification is performed on:
+
+`ever_90dpd_24m`
+
+so that the rare-event proportion is approximately preserved in both
+populations.
+
+The training population is used for:
+
+- fitting preprocessing parameters,
+- fitting model parameters,
+- feature-development decisions,
+- and model estimation.
+
+The validation population is held separate from model fitting and is used
+to evaluate model discrimination and generalization during development.
+
+
+## Independent Out-of-Time Validation
+
+A later Freddie Mac origination vintage will be used as a separate
+**out-of-time (OOT) validation population** once the baseline modelling
+pipeline has been finalized.
+
+This population should represent loans originating after the development
+population and should not contribute information to:
+
+- feature engineering decisions,
+- imputation parameters,
+- encoding parameters,
+- model fitting,
+- hyperparameter selection,
+- or decision-threshold development.
+
+This creates a distinction between:
+
+**Development validation**
+
+and
+
+**Temporal generalization validation**
+
+The development validation set supports model iteration within the current
+sample, while the later-vintage out-of-time population evaluates whether the
+final modelling framework generalizes to a genuinely later mortgage
+population.
+
+
+## Preprocessing and Leakage Control
+
+Any transformation that learns information from the data must be fitted
+using the training population only.
+
+Examples include:
+
+- numerical imputation values,
+- categorical imputation rules that depend on observed distributions,
+- categorical encodings,
+- scaling parameters,
+- feature-selection statistics,
+- and other fitted transformations.
+
+The fitted transformation is then applied unchanged to the validation and
+future out-of-time populations.
+
+Conceptually:
+
+`Training Data -> Fit Preprocessor -> Transform Training Data`
+
+`Validation Data -> Apply Fitted Preprocessor -> Transform Validation Data`
+
+`OOT Data -> Apply Fitted Preprocessor -> Transform OOT Data`
+
+This prevents validation or future-population information from influencing
+model construction.
+
+
+# Missing-Value Treatment
+
+## Missingness Assessment
+
+Sentinel normalization identified missing information among four baseline
+features:
+
+| Feature | Missing Loans | Missing Rate |
+|---|---:|---:|
+| `original_dti` | 3,899 | 8.25% |
+| `first_time_homebuyer_flag` | 1 | ~0.00% |
+| `original_ltv` | 1 | ~0.00% |
+| `original_cltv` | 1 | ~0.00% |
+
+Missingness is therefore primarily concentrated in Original
+Debt-to-Income Ratio (DTI).
+
+
+## Informative DTI Missingness
+
+The relationship between DTI availability and the serious-delinquency
+target was evaluated before selecting an imputation strategy.
+
+| DTI Availability | Loans | Events | Event Rate |
+|---|---:|---:|---:|
+| DTI available | 43,356 | 275 | 0.634% |
+| DTI unavailable | 3,899 | 68 | 1.744% |
+
+Loans with unavailable DTI therefore exhibit an observed serious-delinquency
+rate approximately **2.75 times** that of loans with available DTI.
+
+This indicates that DTI missingness itself contains potentially useful
+predictive information.
+
+
+## Baseline Missing-Value Strategy
+
+The baseline treatment is therefore:
+
+| Feature | Treatment |
+|---|---|
+| `original_dti` | Training-set median imputation + explicit missingness indicator |
+| `original_ltv` | Training-set median imputation |
+| `original_cltv` | Training-set median imputation |
+| `first_time_homebuyer_flag` | Explicit `Unknown` categorical level |
+
+The DTI missingness indicator distinguishes borrowers with genuinely
+observed DTI values from borrowers whose DTI values were unavailable and
+subsequently imputed.
+
+No separate missingness indicators are created for Original LTV or Original
+CLTV because only one missing observation is present in each field in the
+current development population.
+
+
+## Training-Only Imputation
+
+Numerical imputation values are not calculated using the complete modelling
+cohort.
+
+The median values used for DTI, LTV, and CLTV are estimated from the
+**training population only**.
+
+The same fitted values are subsequently applied to the validation population
+and future out-of-time population.
+
+This ensures that preprocessing does not introduce information leakage from
+validation or future observations.

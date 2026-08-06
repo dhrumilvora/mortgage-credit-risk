@@ -16,45 +16,63 @@ flowchart TD
     C --> E["Performance Data<br/>Ingestion & Validation"]
 
     E --> F["Performance History Analysis"]
-
-    F --> G["Serious Delinquency Definition<br/>90+ Days Past Due / REO"]
-
+    F --> G["Serious Delinquency Definition<br/>90+ DPD / REO"]
     G --> H["Cohort Eligibility<br/>First Loan Age = 0 or 1"]
-
-    H --> I["24-Month Outcome<br/>Observability"]
+    H --> I["24-Month Outcome Observability"]
 
     I --> J{"Outcome observable?"}
-
     J -->|"No"| K["Exclude / Censor"]
     J -->|"Yes"| L["Construct Target<br/>ever_90dpd_24m"]
 
     L --> M["Final Modelling Cohort<br/>47,255 loans"]
-
     M --> N["343 Events<br/>0.726%"]
     M --> O["46,912 Non-Events<br/>99.274%"]
 
     D --> P["Origination Feature<br/>Eligibility Review"]
 
     P --> P1["Baseline Features<br/>17 Candidates"]
-
     P --> P2["Challenger Features<br/>4 Candidates"]
-
     P --> P3["Exclude Identifiers,<br/>Constant & Unavailable Fields"]
 
-    P1 --> Q["Feature Engineering<br/>IN PROGRESS"]
+    P1 --> Q["Raw Feature Preparation"]
     P2 -.-> Q
 
-    M --> Q
+    Q --> Q1["Sentinel Normalization<br/>COMPLETE"]
+    Q1 --> Q2["Missingness Analysis<br/>COMPLETE"]
+    Q2 --> Q3["DTI Missingness Indicator<br/>COMPLETE"]
 
-    Q --> R["Train / Validation / Test<br/>Strategy — TBD"]
+    M --> R["Development Dataset"]
+    Q3 --> R
 
-    R --> S["Model Development<br/>TBD"]
+    R --> S["Stratified Development Split<br/>80% Train / 20% Validation"]
 
-    S --> T["Model Validation<br/>TBD"]
+    S --> T["Training Set"]
+    S --> U["Validation Set"]
 
-    T --> U["Calibration & Risk Bands<br/>TBD"]
+    T --> V["Fit Preprocessing<br/>Training Data Only"]
 
-    U --> V["Explainability & Stability<br/>TBD"]
+    V --> W["Imputation"]
+    V --> X["Categorical Encoding"]
+    V --> Y["Other Fitted Transformations"]
+
+    W --> Z["Transform Training Data"]
+    X --> Z
+    Y --> Z
+
+    V --> AA["Apply Fitted Preprocessor<br/>to Validation Data"]
+
+    Z --> AB["Model Development<br/>TBD"]
+    AA --> AB
+
+    AB --> AC["Model Validation<br/>TBD"]
+
+    AC --> AD["Calibration & Risk Bands<br/>TBD"]
+
+    AD --> AE["Explainability & Stability<br/>TBD"]
+
+    AE --> AF["Later Freddie Mac Vintage"]
+
+    AF --> AG["Independent Out-of-Time<br/>Validation"]
 ```
 
 ## Current Status
@@ -67,33 +85,42 @@ flowchart TD
 | Target definition | Complete |
 | Cohort construction | Complete |
 | Target validation | Complete |
-| Origination feature eligibility | **Complete** |
-| Feature engineering | **In progress** |
-| Train / validation / test design | Not started |
+| Origination feature eligibility | Complete |
+| Sentinel normalization | Complete |
+| Missingness analysis | Complete |
+| DTI missingness indicator | Complete |
+| Development / validation strategy | **Complete** |
+| Development split implementation | **Not started** |
+| Fitted preprocessing | Not started |
 | Model development | Not started |
 | Model validation | Not started |
 | Calibration | Not started |
 | Explainability and stability | Not started |
+| Independent out-of-time validation | Future phase |
 
 ## Current Phase
 
-The project is currently in the **Feature Engineering** phase.
+The project is currently transitioning from **raw feature preparation**
+to **development-split implementation**.
 
-The eligible information set for the baseline model has been established
-through the Origination Feature Eligibility Review.
+Feature eligibility and raw missing-value handling rules have been established.
 
-The baseline feature set contains 17 candidate predictors spanning:
+The current development population will be divided using an approximately
+80% / 20% stratified training and validation split.
 
-- borrower credit quality and repayment capacity,
-- collateral and leverage,
-- loan structure,
-- refinance-program characteristics,
-- and broad property geography.
+All transformations that learn parameters from data will subsequently be
+fitted on the training population only.
 
-High-cardinality, sparse, or potentially unstable variables have been
-separated into a challenger feature set rather than automatically included
-in the baseline model.
+This includes:
 
-Feature engineering will now convert the eligible raw origination fields
-into a reproducible modelling dataset while preserving their economic and
-credit-risk meaning.
+- numerical imputation,
+- categorical encoding,
+- scaling where required,
+- feature-selection statistics,
+- and other fitted preprocessing transformations.
+
+The validation population will not contribute information to fitted
+preprocessing or model estimation.
+
+A later Freddie Mac origination vintage will eventually provide an
+independent out-of-time validation population.
