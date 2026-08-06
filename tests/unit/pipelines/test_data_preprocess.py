@@ -1,6 +1,6 @@
 import pandas as pd
 
-from credit_risk.features.eligibility import (
+from credit_risk.features.eligibility_origination import (
     BASELINE_FEATURES,
     IDENTIFIER_FEATURE,
 )
