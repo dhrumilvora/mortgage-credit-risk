@@ -1,10 +1,11 @@
+import shutil
 from pathlib import Path
+
 from credit_risk.data.readers import iter_performance, read_origination
+from credit_risk.data.transformers import transform_origination, transform_performance
 from credit_risk.data.validation import validate_origination, validate_performance
 from credit_risk.data.writers import write_parquet
-from credit_risk.data.transformers import transform_origination, transform_performance
 from credit_risk.utils.config import create_path
-import pandas as pd
 
 
 def ingest(config: dict) -> None:
@@ -53,6 +54,9 @@ def ingest(config: dict) -> None:
         config["parameters"]["data"]["vintage"],
         must_exist=False,
     )
+    if perf_output_dir.exists():
+        shutil.rmtree(perf_output_dir)
+    perf_output_dir.mkdir(parents=True, exist_ok=True)
 
     total_rows = 0
 
@@ -66,10 +70,7 @@ def ingest(config: dict) -> None:
         validation = validate_performance(chunk)
         validation.raise_if_invalid()
 
-        write_parquet(
-            chunk,
-            perf_output_dir / f"part-{chunk_number:05d}.parquet",
-        )
+        write_parquet(chunk, perf_output_dir / f"part-{chunk_number:05d}.parquet")
 
         total_rows += len(chunk)
 

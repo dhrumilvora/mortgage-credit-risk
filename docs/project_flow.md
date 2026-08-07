@@ -46,12 +46,13 @@ flowchart TD
     J -->|"No"| K["Exclude / Censor"]
     J -->|"Yes"| L["Construct Target<br/>ever_90dpd_24m"]
 
-    L --> M["Final Modelling Dataset<br/>47,255 loans × 30 columns"]
+    L --> M["Final Modelling Dataset<br/>Origination-time features + target"]
 
     M --> N["343 Events<br/>0.726%"]
     M --> O["46,912 Non-Events<br/>99.274%"]
 
-    M --> PIPE["Package Entry Point<br/>credit_risk.run_pipeline()"]
+    M --> PIPE["Persist model-input.parquet"]
+    PIPE --> QC["Generate pipeline_qc.xlsx<br/>data-quality reporting"]
 
     PIPE --> R["Development Dataset"]
 
@@ -106,7 +107,8 @@ flowchart TD
 | Performance preprocessing | Complete |
 | Master loan-month integration | Complete |
 | Final modelling dataset construction | Complete |
-| End-to-end `run_pipeline()` integration | **Complete** |
+| End-to-end package entry point | Implemented; the documented return value is incorrect, and target tests need configuration-shape alignment |
+| Data-quality reporting workbook | Complete |
 | Development / validation strategy | Complete |
 | Development split implementation | **Not started** |
 | Fitted preprocessing | Not started |
@@ -118,13 +120,16 @@ flowchart TD
 
 ## Current Pipeline
 
-The end-to-end data pipeline is exposed through the package-level entry point:
+The intended end-to-end data pipeline entry point is:
 
 ```python
+from pathlib import Path
 from credit_risk import run_pipeline
 
-modeling_df = run_pipeline(2015)
+run_pipeline(Path("."))
 ```
+
+The function writes the modelling dataset and data-quality workbook to the configured catalog paths; it currently has no return statement despite its `pd.DataFrame` return annotation and docstring.
 
 The pipeline currently executes:
 
@@ -142,9 +147,11 @@ Master Loan-Month Dataset
 24-Month Serious-Delinquency Target
         ↓
 Final Loan-Level Modelling Dataset
+        ↓
+Data-Quality Workbook (`pipeline_qc.xlsx`)
 ```
 
-### Validated Pipeline Output
+### Latest Persisted 2015 Output
 
 The integrated 2015 pipeline produces:
 
@@ -153,7 +160,7 @@ The integrated 2015 pipeline produces:
 | Final modelling rows | 47,255 |
 | Unique loans | 47,255 |
 | Duplicate loan IDs | 0 |
-| Dataset columns | 30 |
+| Dataset columns | 30 (persisted historical output; regenerate after any schema change) |
 | Serious-delinquency events | 343 |
 | Non-events | 46,912 |
 | Event rate | 0.726% |
@@ -162,7 +169,7 @@ The final modelling dataset therefore has exactly one row per eligible loan.
 
 ## Current Phase
 
-The complete data-construction pipeline is now operational and validated.
+The data-construction and reporting components are implemented. Align the target unit-test configuration with the current nested configuration structure and rerun the suite before treating a fresh run as validated.
 
 The project is transitioning from **data pipeline development** to
 **development-split implementation**.

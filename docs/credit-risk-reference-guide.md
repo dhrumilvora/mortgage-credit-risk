@@ -549,6 +549,12 @@ Known examples relevant to the current project include:
 These values must be handled explicitly during data cleaning and feature
 engineering rather than treated as genuine numeric or categorical values.
 
+The current preprocessing implementation normalizes sentinels for
+`original_dti`, `original_ltv`, `original_cltv`, and
+`first_time_homebuyer_flag`, then adds `original_dti_missing`. The other
+entries in this table remain domain guidance and are not all currently
+transformed by the preprocessing code.
+
 ---
 
 ## 9. Important Modelling Distinctions

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 
-from credit_risk.pipelines.ingest import ingest
 from credit_risk.pipelines.data_preprocess import build_modeling_dataset
-from credit_risk.utils.config import read_config
+from credit_risk.pipelines.ingest import ingest
 from credit_risk.pipelines.reporting import run_reporting_pipeline
+from credit_risk.utils.config import read_config
 
 
-def run_pipeline(project_path: str) -> pd.DataFrame:
+def run_pipeline(project_path: str | Path) -> None:
     """
     Run the end-to-end mortgage credit-risk data pipeline.
 
@@ -24,19 +25,16 @@ def run_pipeline(project_path: str) -> pd.DataFrame:
 
     Parameters
     ----------
-    origination_path:
-        Path to the Freddie Mac origination file.
-
-    performance_path:
-        Path to the Freddie Mac monthly performance file.
+    project_path:
+        Project root containing the ``config`` directory.
 
     Returns
     -------
-    pd.DataFrame
-        Final loan-level modelling dataset containing origination
-        features and the target ``ever_90dpd_24m``.
+    None
+        Persists the modelling dataset and data-quality workbook to the
+        configured catalog paths.
     """
-    config = read_config(project_path)
+    config = read_config(Path(project_path))
     ingest(config)
     build_modeling_dataset(config)
     run_reporting_pipeline(config)

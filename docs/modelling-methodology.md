@@ -6,6 +6,11 @@ The baseline model estimates, using information available at mortgage
 origination, whether a loan will experience serious delinquency within
 its first 24 months.
 
+The repository currently implements dataset construction and data-quality
+reporting only. Development splitting, fitted preprocessing, model fitting,
+validation, calibration, and out-of-time evaluation described below remain
+planned work.
+
 The baseline target is:
 
 `ever_90dpd_24m`
@@ -116,9 +121,9 @@ If serious delinquency is observed before termination, the loan remains
 a positive event regardless of the subsequent termination code.
 
 Otherwise, loans that terminate before completion of the outcome window
-through special or unexplained termination states such as Zero Balance
-Code (ZBC) `15`, ZBC `96`, or missing ZBC are excluded from the baseline
-cohort.
+without a voluntary payoff (`01`) are excluded from the baseline cohort.
+This includes special, adverse, unexplained, and missing zero-balance states
+unless serious delinquency was already observed.
 
 This avoids assigning a negative outcome when the full performance
 window cannot be confidently observed.
@@ -588,6 +593,10 @@ predictive information.
 
 
 ## Baseline Missing-Value Strategy
+
+Sentinel normalization and the `original_dti_missing` indicator are already
+implemented. The imputation and categorical-level treatments below are the
+planned modelling-stage strategy; they are not yet implemented.
 
 The baseline treatment is therefore:
 

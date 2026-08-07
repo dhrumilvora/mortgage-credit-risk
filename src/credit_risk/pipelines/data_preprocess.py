@@ -1,15 +1,14 @@
+
 import pandas as pd
-from pathlib import Path
+
+from credit_risk.data.writers import write_parquet
+from credit_risk.features import origination, performance
 from credit_risk.features.eligibility_origination import (
     validate_baseline_features,
 )
 from credit_risk.features.eligibility_performance import (
     validate_features,
 )
-import credit_risk.features.origination as origination
-import credit_risk.features.performance as performance
-from credit_risk.data.writers import write_parquet
-
 from credit_risk.target.delinquency import (
     build_24m_serious_delinquency_target,
 )
@@ -107,6 +106,8 @@ def build_modeling_dataset(config: dict) -> None:
         config["catalog"]["base"],
         config["catalog"],
         "model_input_path",
+        config["parameters"]["data"]["data_provider"],
+        config["parameters"]["data"]["vintage"],
         must_exist=False,
     )
     write_parquet(modeling, model_input_path)

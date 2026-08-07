@@ -1,10 +1,10 @@
 # 🏠 Mortgage Credit Risk Prediction
 
-An end-to-end machine learning project using Freddie Mac's Single-Family Loan-Level Dataset to predict **future mortgage delinquency risk**.
+An in-progress mortgage credit-risk modelling project using Freddie Mac's Single-Family Loan-Level Dataset. Its implemented data-construction and quality-reporting components prepare an origination-time modelling dataset for **future mortgage delinquency risk**.
 
 The core question behind the project is:
 
-> **Given everything known about a mortgage today, how likely is it to become seriously delinquent within the next 12 months?**
+> **Using information known at mortgage origination, how likely is a mortgage to become seriously delinquent within its first 24 months?**
 
 Unlike a typical credit-risk dataset where each borrower appears once with a predefined default label, Freddie Mac provides the **monthly performance history of each mortgage**. This makes it possible to model how credit risk evolves over time.
 
@@ -12,7 +12,7 @@ Unlike a typical credit-risk dataset where each borrower appears once with a pre
 
 ## 🎯 Problem
 
-The primary target is whether a performing mortgage reaches **90+ Days Past Due (DPD)** within the following 12 months.
+The implemented target is whether a mortgage reaches **90+ Days Past Due (DPD)** or REO acquisition within its first 24 months of performance history: `ever_90dpd_24m`.
 
 Freddie Mac represents delinquency approximately as the number of monthly payments the borrower is behind.
 
@@ -88,7 +88,7 @@ For every observation date:
                                   90+ DPD?
 ```
 
-Only information available on or before the observation date can be used as a feature.
+The current dataset uses origination-time information only. Monthly performance data is used to construct and validate the target, not as a model feature source.
 
 This is particularly important because using information from later months would introduce **look-ahead bias / target leakage**.
 
@@ -114,7 +114,7 @@ Features combine static mortgage characteristics with information derived from t
 * Remaining maturity
 * Loan purpose
 
-### Historical Behaviour
+### Historical Behaviour (planned)
 
 The monthly performance history allows behavioural features such as:
 
@@ -125,13 +125,13 @@ The monthly performance history allows behavioural features such as:
 * Recent delinquency behaviour
 * Historical cure behaviour
 
-All historical features are calculated using information available **up to the prediction month only**.
+These point-in-time features are planned for a future loan-month modelling version. They are not part of the current origination-time model input.
 
 ---
 
-## 🤖 Models
+## 🤖 Models (planned)
 
-The modelling approach uses a **champion–challenger setup**.
+The intended modelling approach is a **champion–challenger setup**. Model training, validation, calibration, and out-of-time evaluation are not implemented yet.
 
 ### Logistic Regression
 
@@ -152,7 +152,7 @@ Models are evaluated across:
 
 ---
 
-## 📊 Model Evaluation
+## 📊 Model Evaluation (planned)
 
 Serious mortgage delinquency is an imbalanced outcome, making standard accuracy a poor measure of model quality.
 
@@ -173,7 +173,7 @@ A practical question is also considered:
 
 ---
 
-## ⏳ Out-of-Time Validation
+## ⏳ Out-of-Time Validation (planned)
 
 Mortgage credit risk changes with economic conditions.
 

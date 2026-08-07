@@ -44,6 +44,8 @@ def load_reporting_data(
         base_path,
         catalog,
         "model_input_path",
+        provider,
+        vintage,
     )
 
     return {

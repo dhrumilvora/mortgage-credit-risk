@@ -12,11 +12,15 @@ from credit_risk.target.delinquency import (
 )
 
 TARGET_CONFIG = {
-    "name": "ever_90dpd_24m",
-    "serious_delinquency_threshold": 3,
-    "max_eligible_start_age": 1,
-    "horizon_months": 24,
-    "voluntary_payoff_zbc": "01",
+    "parameters": {
+        "target": {
+            "name": "ever_90dpd_24m",
+            "serious_delinquency_threshold": 3,
+            "max_eligible_start_age": 1,
+            "horizon_months": 24,
+            "voluntary_payoffs_zbc": "01",
+        }
+    }
 }
 
 
