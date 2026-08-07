@@ -6,10 +6,20 @@ The baseline model estimates, using information available at mortgage
 origination, whether a loan will experience serious delinquency within
 its first 24 months.
 
-The repository currently implements dataset construction and data-quality
-reporting only. Development splitting, fitted preprocessing, model fitting,
-validation, calibration, and out-of-time evaluation described below remain
-planned work.
+The repository currently implements:
+
+- canonical dataset construction,
+- data-quality reporting,
+- loan-level modelling-dataset construction,
+- configurable multi-vintage development-population loading,
+- stratified training/validation splitting,
+- persistence of training and validation populations,
+- and integration of the modelling-data preparation stage into the
+  end-to-end pipeline.
+
+Fitted preprocessing, model fitting, model validation, calibration,
+explainability, and independent out-of-time evaluation remain subsequent
+modelling phases.
 
 The baseline target is:
 
@@ -335,10 +345,8 @@ Important values identified during the eligibility review include:
 For example, `original_dti` contains no conventional null values, but
 3,899 of 47,255 loans (8.25%) contain the `999` sentinel.
 
-Sentinel values will therefore be explicitly normalized during feature
+Sentinel values are therefore explicitly normalized during feature
 engineering rather than treated as genuine numerical observations.
-
-No imputation strategy is defined at the feature-eligibility stage.
 
 
 ## Cross-Variable Domain Validation
@@ -416,18 +424,22 @@ feature-governance decisions documented here.
 Completion of the Origination Feature Eligibility Review establishes
 the information set available to the baseline model.
 
-The next modelling phase is **Feature Engineering**.
+Sentinel normalization and the DTI missingness indicator are implemented
+during data construction.
+
+The remaining fitted feature-engineering steps belong to the modelling
+stage and are performed only after the development population has been
+split into training and validation populations.
 
 This phase will address:
 
-- sentinel-value normalization,
-- missing-value treatment,
+- missing-value imputation,
 - categorical representation,
 - numerical transformations where justified,
 - derived features where economically meaningful,
 - feature-pipeline reproducibility,
 - train/validation consistency,
-- automated data-quality checks.
+- and automated modelling-stage quality checks.
 
 No transformation should change the economic meaning of an origination
 field without an explicit methodological justification.
@@ -443,7 +455,7 @@ generalizes beyond the observations used to estimate model parameters.
 The validation design must also account for the low event rate in the
 development population.
 
-The final modelling cohort contains:
+The final 2015 modelling cohort contains:
 
 | Population | Loans | Serious-Delinquency Events | Event Rate |
 |---|---:|---:|---:|
@@ -471,14 +483,85 @@ A small temporal tail from the same development extract will therefore not
 be treated as a true out-of-time test population.
 
 
+## Development Population Construction
+
+Model development is not structurally restricted to a single Freddie Mac
+vintage.
+
+Each data-pipeline execution constructs and persists a loan-level
+`model_input` dataset for an individual configured vintage.
+
+The modelling layer can subsequently load one or more persisted
+vintage-specific modelling datasets and combine them into a single
+development population.
+
+Conceptually:
+
+`Vintage Model Inputs -> Combine Development Vintages -> Development Population`
+
+Development vintages are controlled through modelling configuration.
+
+For example:
+
+```yaml
+modelling:
+  vintages_train:
+    - 2015
+```
+
+The same modelling infrastructure can subsequently support:
+
+```yaml
+modelling:
+  vintages_train:
+    - 2015
+    - 2016
+    - 2017
+```
+
+without requiring the underlying data-construction pipeline to process
+multiple vintages simultaneously.
+
+The data-construction and modelling configurations therefore have different
+responsibilities:
+
+- the configured data vintage identifies the vintage being constructed by
+  the current data-pipeline execution;
+- `vintages_train` identifies the persisted vintage populations consumed
+  for model development.
+
+A `vintage` field is added when vintage-specific model inputs are loaded.
+
+This field is retained as modelling metadata rather than as a baseline
+predictor.
+
+It supports:
+
+- population reconciliation,
+- vintage-level diagnostics,
+- stability analysis,
+- model-performance analysis by vintage,
+- and future temporal validation.
+
+All combined modelling vintages are required to have compatible modelling
+schemas.
+
+Loan identifiers are also validated when vintages are combined so that the
+same mortgage cannot silently appear more than once in the development
+population.
+
+
 ## Development Split
 
-The current cohort will be divided into:
+The combined development population is divided into:
 
 - **Training population**
 - **Validation population**
 
-using an approximately **80% / 20% stratified split**.
+using a configurable development split.
+
+The baseline configuration uses an approximately **80% / 20% stratified
+random split**.
 
 Stratification is performed on:
 
@@ -487,15 +570,82 @@ Stratification is performed on:
 so that the rare-event proportion is approximately preserved in both
 populations.
 
+The modelling configuration controls:
+
+- validation-population size,
+- random state,
+- and whether target stratification is enabled.
+
+A fixed random state makes the population assignment reproducible for an
+unchanged input population and configuration.
+
+Before splitting, the implementation validates that:
+
+- the target column exists,
+- the target contains no missing values,
+- the target contains at least two classes,
+- and the configured validation fraction lies strictly between zero and one.
+
 The training population is used for:
 
 - fitting preprocessing parameters,
 - fitting model parameters,
 - feature-development decisions,
+- hyperparameter selection,
 - and model estimation.
 
 The validation population is held separate from model fitting and is used
 to evaluate model discrimination and generalization during development.
+
+
+## Development Split Persistence
+
+The generated training and validation populations are persisted as separate
+modelling artifacts.
+
+Conceptually:
+
+`Development Population -> Development Split -> Train + Validation`
+
+The combined multi-vintage development population itself is constructed in
+memory and is not separately persisted.
+
+Its constituent vintage-specific `model_input` datasets already provide the
+durable source artifacts from which the development population can be
+reconstructed.
+
+The exact training and validation populations are persisted because
+population assignment is important for reproducible model development.
+
+Both persisted datasets retain:
+
+- `loan_id` for lineage and reconciliation,
+- `vintage` for temporal and stability analysis,
+- eligible origination-time information,
+- and the modelling target.
+
+`loan_id` and `vintage` are retained as metadata and are not baseline
+predictors.
+
+Repeated execution with an unchanged development population, split
+configuration, and random state reproduces the same population assignment.
+
+Routine reruns of an unchanged configuration do not require creation of a
+new split version.
+
+A new development-dataset version should instead be established when the
+underlying population definition or splitting methodology changes
+materially, including changes to:
+
+- development vintages,
+- cohort eligibility,
+- target definition,
+- validation fraction,
+- random state,
+- or splitting strategy.
+
+Model experiments will subsequently be versioned separately from routine
+reconstruction of an unchanged development split.
 
 
 ## Independent Out-of-Time Validation
@@ -523,15 +673,18 @@ and
 **Temporal generalization validation**
 
 The development validation set supports model iteration within the current
-sample, while the later-vintage out-of-time population evaluates whether the
-final modelling framework generalizes to a genuinely later mortgage
-population.
+development population, while the later-vintage out-of-time population
+evaluates whether the finalized modelling framework generalizes to a
+genuinely later mortgage population.
 
 
 ## Preprocessing and Leakage Control
 
-Any transformation that learns information from the data must be fitted
-using the training population only.
+The development split is completed before any fitted modelling-stage
+preprocessing is performed.
+
+Any transformation that learns information from the data must therefore be
+fitted using the training population only.
 
 Examples include:
 
@@ -545,7 +698,11 @@ Examples include:
 The fitted transformation is then applied unchanged to the validation and
 future out-of-time populations.
 
-Conceptually:
+The modelling sequence is therefore:
+
+`Model Inputs -> Development Population -> Train / Validation Split`
+
+followed by:
 
 `Training Data -> Fit Preprocessor -> Transform Training Data`
 
@@ -553,8 +710,14 @@ Conceptually:
 
 `OOT Data -> Apply Fitted Preprocessor -> Transform OOT Data`
 
-This prevents validation or future-population information from influencing
-model construction.
+The validation population therefore contributes no information to the
+estimation of preprocessing parameters.
+
+Likewise, future out-of-time populations will not influence fitted
+preprocessing or model construction.
+
+This ordering prevents validation or future-population information from
+influencing model development.
 
 
 # Missing-Value Treatment
@@ -595,10 +758,14 @@ predictive information.
 ## Baseline Missing-Value Strategy
 
 Sentinel normalization and the `original_dti_missing` indicator are already
-implemented. The imputation and categorical-level treatments below are the
-planned modelling-stage strategy; they are not yet implemented.
+implemented during data construction.
 
-The baseline treatment is therefore:
+The development train/validation split is also implemented.
+
+The remaining imputation and categorical-level treatments represent the
+next modelling-stage implementation.
+
+The baseline treatment is:
 
 | Feature | Treatment |
 |---|---|
@@ -621,11 +788,108 @@ current development population.
 Numerical imputation values are not calculated using the complete modelling
 cohort.
 
-The median values used for DTI, LTV, and CLTV are estimated from the
+The median values used for DTI, LTV, and CLTV will be estimated from the
 **training population only**.
 
-The same fitted values are subsequently applied to the validation population
-and future out-of-time population.
+The same fitted values will subsequently be applied unchanged to:
+
+- the validation population,
+- and future out-of-time populations.
 
 This ensures that preprocessing does not introduce information leakage from
 validation or future observations.
+
+
+# Current Modelling Pipeline State
+
+The implemented modelling-data preparation flow is:
+
+```text
+Per-Vintage Model Inputs
+        ↓
+Load Configured Development Vintages
+        ↓
+Validate Schemas and Loan Identifiers
+        ↓
+Combine Development Population
+        ↓
+Configurable Stratified Development Split
+        ↓
+        ├── Training Population
+        │       ↓
+        │   Persist Train Dataset
+        │
+        └── Validation Population
+                ↓
+            Persist Validation Dataset
+```
+
+The modelling stage is integrated with the main project pipeline and can be
+enabled or skipped through configuration.
+
+The modelling-data preparation components are covered by unit tests for:
+
+- single-vintage loading,
+- multi-vintage loading,
+- vintage metadata retention,
+- empty vintage configuration,
+- duplicate loan detection,
+- schema consistency,
+- development split size,
+- target stratification,
+- train/validation population separation,
+- complete population reconciliation,
+- split reproducibility,
+- validation-size constraints,
+- target integrity,
+- modelling-pipeline orchestration,
+- persistence routing,
+- and configured pipeline skipping.
+
+
+# Next Modelling Phase
+
+The development-population and validation infrastructure is now complete.
+
+The next phase is **fitted preprocessing**.
+
+The immediate modelling sequence is:
+
+```text
+Persisted Training Population
+        ↓
+Fit Preprocessing
+        ↓
+Imputation
+        ↓
+Categorical Encoding
+        ↓
+Other Fitted Transformations
+        ↓
+Transform Training Population
+        │
+        ├───────────────┐
+        │               │
+        ▼               ▼
+Model Development   Apply Same Fitted
+                    Preprocessor
+                        ↓
+                  Validation Population
+```
+
+The first implementation priorities are:
+
+1. define numerical, categorical, metadata, and target columns;
+2. implement training-only numerical imputation;
+3. implement categorical missing-value treatment;
+4. define categorical encoding;
+5. ensure `loan_id`, `vintage`, and the target are excluded from the
+   predictor matrix;
+6. fit all learned transformations exclusively on training data;
+7. apply the fitted preprocessing pipeline unchanged to validation data;
+8. persist the fitted preprocessing artifact for reproducibility;
+9. add unit and pipeline-level tests for leakage prevention and transformation
+   consistency.
+
+Only after this preprocessing boundary is established will baseline model
+estimation begin.

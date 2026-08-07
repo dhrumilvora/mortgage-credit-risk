@@ -41,6 +41,7 @@ def main() -> None:
     configure_logging(
         level=logging_config.get("level", "INFO"),
         enabled=logging_config.get("enabled", True),
+        color=logging_config.get("color", True),
     )
     data_config = config["parameters"]["data"]
 

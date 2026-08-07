@@ -19,14 +19,29 @@ catalog:
     folder_name: "02_intermediate"
     file_name: "performance"
     file_type: "folder"
+
 ### Processed Model Input File
 
   model_input_path:
     folder_name: "03_processed"
     file_name: "model-input"
     file_type: "parquet"
+
+### Split Files
+
+  train_df:
+    folder_name: "04_model_split"
+    file_name: "train_split"
+    file_type: "parquet"
+  test_df:
+    folder_name: "04_model_split"
+    file_name: "validation_split"
+    file_type: "parquet"
+
 ### Model Input QC  
+
   pipeline_qc:
-    folder_name: "04_reporting/data_quality"
+    folder_name: "06_reporting/data_quality"
     file_name: "pipeline_qc"
     file_type: "xlsx"
+

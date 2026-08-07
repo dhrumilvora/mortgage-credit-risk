@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def run_reporting_pipeline(
     config: dict,
-) -> Path:
+) -> Path | None:
     """
     Build and persist the data-quality reporting workbook.
 
@@ -24,6 +24,10 @@ def run_reporting_pipeline(
     """
 
     parameters = config["parameters"]
+    if parameters.get("reporting", {}).get("skip", False):
+        logger.info("Data-quality reporting skipped by configuration")
+        return None
+
     catalog = config["catalog"]
     start = perf_counter()
     logger.info("Data-quality reporting started: vintage=%s", parameters["data"]["vintage"])

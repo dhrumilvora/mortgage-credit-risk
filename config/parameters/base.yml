@@ -5,23 +5,33 @@ parameters:
   logging:
     enabled: true
     level: INFO
+    color: true
+
+  reporting:
+    skip: true
 
   data:
     data_provider: freddie_mac
-    vintage: 2015
+    vintage: 2019
     id_col: "loan_id"
     time: "period"
     ingestion:
-      skip: false
+      skip: true
       chunksize: 2500000
     preprocess:
-      skip: false 
-      performance_parameters:
-      - test+
-  model_config:
+      skip: true 
+  modelling:
+    skip: true
+    vintages_train:
+      - 2015
+      - 2016
+      - 2017
+    vintages_oot:
+      - 2018
+      - 2019
     validation_size : 0.2
     random_state: 42
-    stratified: true
+    stratify: true
 
   target:
     name : ever_90dpd_24m
