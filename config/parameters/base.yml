@@ -5,17 +5,23 @@ parameters:
   data:
     data_provider: freddie_mac
     vintage: 2015
+    id_col: "loan_id"
+    time: "period"
     ingestion:
-      skip: true
+      skip: false
       chunksize: 2500000
     preprocess:
       skip: false 
       performance_parameters:
-        serious_delinquency_threshold: 3
-        max_eligible_start_age: 1
-        horizon_months: 24
-        voluntary_payoffs_zbc : "0.1"
+      - test+
+  model_config:
+    validation_size : 0.2
+    random_state: 42
+    stratified: true
 
-    model_config:
-      validation_size : 0.2
-      random_state: 42
+  target:
+    name : ever_90dpd_24m
+    serious_delinquency_threshold: 3
+    max_eligible_start_age: 1
+    horizon_months: 24
+    voluntary_payoffs_zbc: "01"

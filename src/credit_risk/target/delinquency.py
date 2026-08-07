@@ -1,36 +1,34 @@
 from __future__ import annotations
 import pandas as pd
 
-SERIOUS_DELINQUENCY_THRESHOLD = 3
-MAX_ELIGIBLE_START_AGE = 1
-TARGET_HORIZON_MONTHS = 24
-VOLUNTARY_PAYOFF_ZBC = "01"
 
-
-def add_serious_delinquency_flag(perf: pd.DataFrame) -> pd.DataFrame:
-    result = perf.copy()
+def add_serious_delinquency_flag(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    result = df.copy()
     delq_numeric = pd.to_numeric(
         result["current_loan_delinquency_status"], errors="coerce"
     )
     result["is_serious_delinquency"] = delq_numeric.ge(
-        SERIOUS_DELINQUENCY_THRESHOLD
+        config["parameters"]["target"]["serious_delinquency_threshold"]
     ) | result["current_loan_delinquency_status"].eq("RA")
     return result
 
 
-def build_cohort_eligibility(perf: pd.DataFrame) -> pd.DataFrame:
-    eligibility = perf.groupby("loan_id", as_index=False).agg(
+def build_cohort_eligibility(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    eligibility = df.groupby("loan_id", as_index=False).agg(
         first_loan_age=("loan_age", "min")
     )
     eligibility["is_start_eligible"] = (
-        eligibility["first_loan_age"] <= MAX_ELIGIBLE_START_AGE
+        eligibility["first_loan_age"]
+        <= config["parameters"]["target"]["max_eligible_start_age"]
     )
     return eligibility
 
 
-def build_outcome_observability(perf: pd.DataFrame) -> pd.DataFrame:
-    perf = add_serious_delinquency_flag(perf)
-    within_horizon = perf.loc[perf["loan_age"].between(0, TARGET_HORIZON_MONTHS)].copy()
+def build_outcome_observability(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    df = add_serious_delinquency_flag(df, config)
+    within_horizon = df.loc[
+        df["loan_age"].between(0, config["parameters"]["target"]["horizon_months"])
+    ].copy()
     summary = (
         within_horizon.sort_values(["loan_id", "loan_age"])
         .groupby("loan_id")
@@ -40,11 +38,17 @@ def build_outcome_observability(perf: pd.DataFrame) -> pd.DataFrame:
             final_zero_balance_code=("zero_balance_code", "last"),
         )
     ).reset_index()
-    summary["completed_horizon"] = summary["last_loan_age"] >= TARGET_HORIZON_MONTHS
+    summary["completed_horizon"] = (
+        summary["last_loan_age"] >= config["parameters"]["target"]["horizon_months"]
+    )
 
     summary["voluntary_early_payoff"] = summary["last_loan_age"].lt(
-        TARGET_HORIZON_MONTHS
-    ) & summary["final_zero_balance_code"].eq(VOLUNTARY_PAYOFF_ZBC).fillna(False)
+        config["parameters"]["target"]["horizon_months"]
+    ) & summary["final_zero_balance_code"].eq(
+        config["parameters"]["target"]["voluntary_payoffs_zbc"]
+    ).fillna(
+        False
+    )
 
     summary["is_outcome_observable"] = (
         summary["ever_serious_delinquency"].fillna(False)
@@ -55,9 +59,11 @@ def build_outcome_observability(perf: pd.DataFrame) -> pd.DataFrame:
     return summary
 
 
-def build_24m_serious_delinquency_target(perf: pd.DataFrame) -> pd.DataFrame:
-    eligibility = build_cohort_eligibility(perf)
-    observability = build_outcome_observability(perf)
+def build_24m_serious_delinquency_target(
+    df: pd.DataFrame, config: dict
+) -> pd.DataFrame:
+    eligibility = build_cohort_eligibility(df, config)
+    observability = build_outcome_observability(df, config)
     target = eligibility.merge(
         observability, on=["loan_id"], how="left", validate="one_to_one"
     )

@@ -55,8 +55,10 @@ def build_master_dataset(
 
 def build_modeling_dataset(config: dict) -> None:
     """Build the final loan-level modelling dataset."""
+
     if config["parameters"]["data"]["preprocess"]["skip"]:
         return
+
     origination = create_path(
         config["catalog"]["base"],
         config["catalog"],
@@ -64,6 +66,7 @@ def build_modeling_dataset(config: dict) -> None:
         config["parameters"]["data"]["data_provider"],
         config["parameters"]["data"]["vintage"],
     )
+
     performance = create_path(
         config["catalog"]["base"],
         config["catalog"],
@@ -71,26 +74,34 @@ def build_modeling_dataset(config: dict) -> None:
         config["parameters"]["data"]["data_provider"],
         config["parameters"]["data"]["vintage"],
     )
+
     origination_df = pd.read_parquet(origination)
     performance_df = pd.read_parquet(performance)
 
+    # Build the origination-time feature set separately.
+    origination_features = build_origination(origination_df)
+
+    # Master loan-month dataset is used only for target construction.
     master = build_master_dataset(
         origination_df,
         performance_df,
     )
 
-    target = build_24m_serious_delinquency_target(master)
+    target = build_24m_serious_delinquency_target(
+        master,
+        config,
+    )
 
-    # Origination attributes are constant across loan-months,
-    # so retain one record per eligible loan.
-    origination_features = master.drop_duplicates(subset="loan_id")
-
+    # Final modelling dataset:
+    # origination-time features + target only.
     modeling = origination_features.merge(
         target,
         on="loan_id",
         how="inner",
         validate="one_to_one",
     ).reset_index(drop=True)
+
+    # Continue with your existing model_input write logic below.
 
     model_input_path = create_path(
         config["catalog"]["base"],

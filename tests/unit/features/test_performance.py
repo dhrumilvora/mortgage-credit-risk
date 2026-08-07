@@ -1,112 +1,89 @@
+"""Tests for performance feature selection."""
+
 import pandas as pd
 import pytest
 
-from credit_risk.features.performance import (
-    build_performance,
-    validate_performance_columns,
-    validate_performance_grain,
+from credit_risk.features.eligibility_performance import (
+    BASELINE_FEATURES,
+    IDENTIFIER_FIELDS,
+    STATE_FIELDS,
+    TERMINATION_FIELDS,
+    TIME_FIELDS,
+)
+from credit_risk.features.performance import select_baseline_features
+
+EXPECTED_COLUMNS = (
+    IDENTIFIER_FIELDS
+    + TIME_FIELDS
+    + BASELINE_FEATURES
+    + STATE_FIELDS
+    + TERMINATION_FIELDS
 )
 
 
-def make_performance_df():
-    return pd.DataFrame(
-        {
-            "loan_id": ["B", "A", "A"],
-            "monthly_reporting_period": [
-                "201502",
-                "201502",
-                "201501",
-            ],
-            "loan_age": [1, 1, 0],
-            "current_loan_delinquency_status": [
-                "00",
-                "01",
-                "00",
-            ],
-            "zero_balance_code": [
-                pd.NA,
-                pd.NA,
-                pd.NA,
-            ],
-        }
-    )
+@pytest.fixture
+def performance_df() -> pd.DataFrame:
+    """Create a minimal performance dataset containing all required fields."""
+
+    data = {column: [1, 2] for column in EXPECTED_COLUMNS}
+
+    data["unused_feature"] = [100, 200]
+
+    return pd.DataFrame(data)
 
 
-def test_build_performance_preserves_rows():
-    perf = make_performance_df()
+def test_select_baseline_features_selects_expected_columns(
+    performance_df: pd.DataFrame,
+) -> None:
+    """Selected dataset should contain exactly the expected fields."""
 
-    result = build_performance(perf)
+    result = select_baseline_features(performance_df)
 
-    assert len(result) == len(perf)
-
-
-def test_build_performance_normalizes_types():
-    perf = make_performance_df()
-
-    result = build_performance(perf)
-
-    assert str(result["loan_id"].dtype) == "string"
-    assert str(result["loan_age"].dtype) == "Int64"
-    assert pd.api.types.is_datetime64_any_dtype(result["monthly_reporting_period"])
+    assert result.columns.tolist() == EXPECTED_COLUMNS
 
 
-def test_build_performance_sorts_history():
-    perf = make_performance_df()
+def test_select_baseline_features_drops_unselected_columns(
+    performance_df: pd.DataFrame,
+) -> None:
+    """Fields outside the baseline specification should be removed."""
 
-    result = build_performance(perf)
+    result = select_baseline_features(performance_df)
 
-    loan_a = result.loc[result["loan_id"] == "A"]
-
-    assert loan_a["loan_age"].tolist() == [0, 1]
-
-
-def test_missing_required_column_raises():
-    perf = make_performance_df().drop(columns="loan_age")
-
-    with pytest.raises(
-        ValueError,
-        match="loan_age",
-    ):
-        validate_performance_columns(perf)
+    assert "unused_feature" not in result.columns
 
 
-def test_duplicate_loan_month_raises():
-    perf = make_performance_df()
+def test_select_baseline_features_preserves_rows(
+    performance_df: pd.DataFrame,
+) -> None:
+    """Feature selection should not change the number of observations."""
 
-    duplicate = perf.iloc[[0]].copy()
+    result = select_baseline_features(performance_df)
 
-    perf = pd.concat(
-        [perf, duplicate],
-        ignore_index=True,
-    )
-
-    with pytest.raises(
-        ValueError,
-        match="duplicate",
-    ):
-        build_performance(perf)
+    assert len(result) == len(performance_df)
 
 
-def test_negative_loan_age_raises():
-    perf = make_performance_df()
+def test_select_baseline_features_returns_copy(
+    performance_df: pd.DataFrame,
+) -> None:
+    """Changes to the result should not modify the source DataFrame."""
 
-    perf.loc[0, "loan_age"] = -1
+    result = select_baseline_features(performance_df)
 
-    with pytest.raises(
-        ValueError,
-        match="negative loan_age",
-    ):
-        build_performance(perf)
+    column = EXPECTED_COLUMNS[0]
+
+    result.loc[0, column] = 999
+
+    assert performance_df.loc[0, column] != 999
 
 
-def test_build_performance_does_not_modify_input():
-    perf = make_performance_df()
+def test_select_baseline_features_raises_for_missing_column(
+    performance_df: pd.DataFrame,
+) -> None:
+    """Missing required fields should prevent feature selection."""
 
-    original = perf.copy(deep=True)
+    missing_column = EXPECTED_COLUMNS[-1]
 
-    build_performance(perf)
+    performance_df = performance_df.drop(columns=missing_column)
 
-    pd.testing.assert_frame_equal(
-        perf,
-        original,
-    )
+    with pytest.raises(KeyError):
+        select_baseline_features(performance_df)

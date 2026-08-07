@@ -6,6 +6,7 @@ from __future__ import annotations
 from credit_risk.pipelines.ingest import ingest
 from credit_risk.pipelines.data_preprocess import build_modeling_dataset
 from credit_risk.utils.config import read_config
+from credit_risk.pipelines.reporting import run_reporting_pipeline
 
 
 def run_pipeline(project_path: str) -> pd.DataFrame:
@@ -38,3 +39,4 @@ def run_pipeline(project_path: str) -> pd.DataFrame:
     config = read_config(project_path)
     ingest(config)
     build_modeling_dataset(config)
+    run_reporting_pipeline(config)

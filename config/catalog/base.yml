@@ -25,5 +25,8 @@ catalog:
     folder_name: "03_processed"
     file_name: "model-input"
     file_type: "parquet"
-  
-
+### Model Input QC  
+  pipeline_qc:
+    folder_name: "04_reporting/data_quality"
+    file_name: "pipeline_qc"
+    file_type: "xlsx"
