@@ -1,0 +1,29 @@
+catalog:
+  base: "data"
+## Raw Files
+  raw_origination:
+    folder_name: "01_raw"
+    file_name: "sample_orig"
+    file_type: "txt" 
+  raw_performance:
+    folder_name: "01_raw"
+    file_name: "sample_perf"
+    file_type: "txt"
+
+## Intermediate Origination & Performance Files
+  origination_path:
+    folder_name: "02_intermediate"
+    file_name: "origination"
+    file_type: "parquet"
+  performance_path:
+    folder_name: "02_intermediate"
+    file_name: "performance"
+    file_type: "folder"
+### Processed Model Input File
+
+  model_input_path:
+    folder_name: "03_processed"
+    file_name: "model-input"
+    file_type: "parquet"
+  
+

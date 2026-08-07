@@ -1,0 +1,21 @@
+parameters:
+  project:
+    name: mortgage-credit-risk
+
+  data:
+    data_provider: freddie_mac
+    vintage: 2015
+    ingestion:
+      skip: true
+      chunksize: 2500000
+    preprocess:
+      skip: false 
+      performance_parameters:
+        serious_delinquency_threshold: 3
+        max_eligible_start_age: 1
+        horizon_months: 24
+        voluntary_payoffs_zbc : "0.1"
+
+    model_config:
+      validation_size : 0.2
+      random_state: 42

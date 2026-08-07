@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pandas as pd
 
 from credit_risk.pipelines.ingest import ingest
 from credit_risk.pipelines.data_preprocess import build_modeling_dataset
+from credit_risk.utils.config import read_config
 
 
-def run_pipeline(year: int) -> pd.DataFrame:
+def run_pipeline(project_path: str) -> pd.DataFrame:
     """
     Run the end-to-end mortgage credit-risk data pipeline.
 
@@ -37,14 +35,6 @@ def run_pipeline(year: int) -> pd.DataFrame:
         Final loan-level modelling dataset containing origination
         features and the target ``ever_90dpd_24m``.
     """
-
-    origination, performance = ingest(
-        year, Path("data/01_raw/freddie_mac"), Path("data/02_interim")
-    )
-
-    modeling_df = build_modeling_dataset(
-        origination=origination,
-        performance=performance,
-    )
-
-    return modeling_df
+    config = read_config(project_path)
+    ingest(config)
+    build_modeling_dataset(config)

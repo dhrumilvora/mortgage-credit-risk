@@ -8,10 +8,12 @@ from credit_risk.features.eligibility_performance import (
 )
 import credit_risk.features.origination as origination
 import credit_risk.features.performance as performance
+from credit_risk.data.writers import write_parquet
 
 from credit_risk.target.delinquency import (
     build_24m_serious_delinquency_target,
 )
+from credit_risk.utils.config import create_path
 
 
 def build_origination(df: pd.DataFrame) -> pd.DataFrame:
@@ -51,8 +53,24 @@ def build_master_dataset(
     )
 
 
-def build_modeling_dataset(origination: Path, performance: Path) -> pd.DataFrame:
+def build_modeling_dataset(config: dict) -> None:
     """Build the final loan-level modelling dataset."""
+    if config["parameters"]["data"]["preprocess"]["skip"]:
+        return
+    origination = create_path(
+        config["catalog"]["base"],
+        config["catalog"],
+        "origination_path",
+        config["parameters"]["data"]["data_provider"],
+        config["parameters"]["data"]["vintage"],
+    )
+    performance = create_path(
+        config["catalog"]["base"],
+        config["catalog"],
+        "performance_path",
+        config["parameters"]["data"]["data_provider"],
+        config["parameters"]["data"]["vintage"],
+    )
     origination_df = pd.read_parquet(origination)
     performance_df = pd.read_parquet(performance)
 
@@ -72,6 +90,12 @@ def build_modeling_dataset(origination: Path, performance: Path) -> pd.DataFrame
         on="loan_id",
         how="inner",
         validate="one_to_one",
-    )
+    ).reset_index(drop=True)
 
-    return modeling.reset_index(drop=True)
+    model_input_path = create_path(
+        config["catalog"]["base"],
+        config["catalog"],
+        "model_input_path",
+        must_exist=False,
+    )
+    write_parquet(modeling, model_input_path)
