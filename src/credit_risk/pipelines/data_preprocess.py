@@ -1,3 +1,5 @@
+import logging
+from time import perf_counter
 
 import pandas as pd
 
@@ -13,6 +15,8 @@ from credit_risk.target.delinquency import (
     build_24m_serious_delinquency_target,
 )
 from credit_risk.utils.config import create_path
+
+logger = logging.getLogger(__name__)
 
 
 def build_origination(df: pd.DataFrame) -> pd.DataFrame:
@@ -56,7 +60,14 @@ def build_modeling_dataset(config: dict) -> None:
     """Build the final loan-level modelling dataset."""
 
     if config["parameters"]["data"]["preprocess"]["skip"]:
+        logger.info("Preprocessing skipped by configuration")
         return
+
+    start = perf_counter()
+    data_config = config["parameters"]["data"]
+    provider = data_config["data_provider"]
+    vintage = data_config["vintage"]
+    logger.info("Dataset construction started: provider=%s vintage=%s", provider, vintage)
 
     origination = create_path(
         config["catalog"]["base"],
@@ -111,3 +122,11 @@ def build_modeling_dataset(config: dict) -> None:
         must_exist=False,
     )
     write_parquet(modeling, model_input_path)
+    logger.info(
+        "Dataset construction completed: rows=%s columns=%s events=%s path=%s duration_seconds=%.2f",
+        f"{len(modeling):,}",
+        modeling.shape[1],
+        f"{int(modeling['ever_90dpd_24m'].sum()):,}",
+        model_input_path,
+        perf_counter() - start,
+    )

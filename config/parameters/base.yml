@@ -2,6 +2,10 @@ parameters:
   project:
     name: mortgage-credit-risk
 
+  logging:
+    enabled: true
+    level: INFO
+
   data:
     data_provider: freddie_mac
     vintage: 2015

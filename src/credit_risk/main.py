@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from time import perf_counter
 
 from credit_risk.pipelines.data_preprocess import build_modeling_dataset
 from credit_risk.pipelines.ingest import ingest
 from credit_risk.pipelines.reporting import run_reporting_pipeline
 from credit_risk.utils.config import read_config
+from credit_risk.utils.logging import configure_logging
+
+logger = logging.getLogger(__name__)
 
 
 def run_pipeline(project_path: str | Path) -> None:
@@ -34,7 +39,17 @@ def run_pipeline(project_path: str | Path) -> None:
         Persists the modelling dataset and data-quality workbook to the
         configured catalog paths.
     """
-    config = read_config(Path(project_path))
+    project_root = Path(project_path)
+    config = read_config(project_root)
+    logging_config = config["parameters"].get("logging", {})
+    configure_logging(
+        level=logging_config.get("level", "INFO"),
+        enabled=logging_config.get("enabled", True),
+    )
+
+    start = perf_counter()
+    logger.info("Pipeline started: project=%s", project_root.resolve())
     ingest(config)
     build_modeling_dataset(config)
     run_reporting_pipeline(config)
+    logger.info("Pipeline completed in %.2f seconds", perf_counter() - start)

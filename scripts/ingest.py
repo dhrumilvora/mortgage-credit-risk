@@ -3,6 +3,7 @@ from pathlib import Path
 
 from credit_risk.pipelines.ingest import ingest
 from credit_risk.utils.config import read_config
+from credit_risk.utils.logging import configure_logging
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,6 +37,11 @@ def main() -> None:
     args = parse_args()
 
     config = read_config(args.project_path)
+    logging_config = config["parameters"].get("logging", {})
+    configure_logging(
+        level=logging_config.get("level", "INFO"),
+        enabled=logging_config.get("enabled", True),
+    )
     data_config = config["parameters"]["data"]
 
     if args.year is not None:

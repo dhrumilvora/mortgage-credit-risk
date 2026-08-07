@@ -1,5 +1,7 @@
+import logging
 import shutil
 from pathlib import Path
+from time import perf_counter
 
 from credit_risk.data.readers import iter_performance, read_origination
 from credit_risk.data.transformers import transform_origination, transform_performance
@@ -7,32 +9,42 @@ from credit_risk.data.validation import validate_origination, validate_performan
 from credit_risk.data.writers import write_parquet
 from credit_risk.utils.config import create_path
 
+logger = logging.getLogger(__name__)
+
 
 def ingest(config: dict) -> None:
     if config["parameters"]["data"]["ingestion"]["skip"]:
+        logger.info("Ingestion skipped by configuration")
         return
+
+    start = perf_counter()
+    data_config = config["parameters"]["data"]
+    provider = data_config["data_provider"]
+    vintage = data_config["vintage"]
+    logger.info("Ingestion started: provider=%s vintage=%s", provider, vintage)
+
     raw_dir = Path(config["catalog"]["base"])
     orig_path = create_path(
         raw_dir,
         config["catalog"],
         "raw_origination",
-        config["parameters"]["data"]["data_provider"],
-        config["parameters"]["data"]["vintage"],
+        provider,
+        vintage,
     )
     perf_path = create_path(
         raw_dir,
         config["catalog"],
         "raw_performance",
-        config["parameters"]["data"]["data_provider"],
-        config["parameters"]["data"]["vintage"],
+        provider,
+        vintage,
     )
 
     output_origination = create_path(
         raw_dir,
         config["catalog"],
         "origination_path",
-        config["parameters"]["data"]["data_provider"],
-        config["parameters"]["data"]["vintage"],
+        provider,
+        vintage,
         must_exist=False,
     )
 
@@ -43,6 +55,7 @@ def ingest(config: dict) -> None:
     orig_validation.raise_if_invalid()
 
     write_parquet(orig, output_origination)
+    logger.info("Origination data written: rows=%s path=%s", f"{len(orig):,}", output_origination)
 
     ## Performance ##
 
@@ -50,11 +63,12 @@ def ingest(config: dict) -> None:
         raw_dir,
         config["catalog"],
         "performance_path",
-        config["parameters"]["data"]["data_provider"],
-        config["parameters"]["data"]["vintage"],
+        provider,
+        vintage,
         must_exist=False,
     )
     if perf_output_dir.exists():
+        logger.info("Removing existing performance output: path=%s", perf_output_dir)
         shutil.rmtree(perf_output_dir)
     perf_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -74,7 +88,10 @@ def ingest(config: dict) -> None:
 
         total_rows += len(chunk)
 
-    print(
-        f"Year {config['parameters']['data']['vintage']} ingestion complete. "
-        f"Performance rows: {total_rows:,}"
+    logger.info(
+        "Ingestion completed: vintage=%s performance_rows=%s chunks=%s duration_seconds=%.2f",
+        vintage,
+        f"{total_rows:,}",
+        chunk_number + 1 if total_rows else 0,
+        perf_counter() - start,
     )
