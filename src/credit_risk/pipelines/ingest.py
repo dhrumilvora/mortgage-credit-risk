@@ -20,78 +20,85 @@ def ingest(config: dict) -> None:
     start = perf_counter()
     data_config = config["parameters"]["data"]
     provider = data_config["data_provider"]
-    vintage = data_config["vintage"]
-    logger.info("Ingestion started: provider=%s vintage=%s", provider, vintage)
+    for vintage in data_config["all_vintages"]:
 
-    raw_dir = Path(config["catalog"]["base"])
-    orig_path = create_path(
-        raw_dir,
-        config["catalog"],
-        "raw_origination",
-        provider,
-        vintage,
-    )
-    perf_path = create_path(
-        raw_dir,
-        config["catalog"],
-        "raw_performance",
-        provider,
-        vintage,
-    )
+        logger.info("Ingestion started: provider=%s vintage=%s", provider, vintage)
 
-    output_origination = create_path(
-        raw_dir,
-        config["catalog"],
-        "origination_path",
-        provider,
-        vintage,
-        must_exist=False,
-    )
-
-    ## Origination ##
-    orig = read_origination(orig_path)
-    orig = transform_origination(orig)
-    orig_validation = validate_origination(orig)
-    orig_validation.raise_if_invalid()
-
-    write_parquet(orig, output_origination)
-    logger.info("Origination data written: rows=%s path=%s", f"{len(orig):,}", output_origination)
-
-    ## Performance ##
-
-    perf_output_dir = create_path(
-        raw_dir,
-        config["catalog"],
-        "performance_path",
-        provider,
-        vintage,
-        must_exist=False,
-    )
-    if perf_output_dir.exists():
-        logger.info("Removing existing performance output: path=%s", perf_output_dir)
-        shutil.rmtree(perf_output_dir)
-    perf_output_dir.mkdir(parents=True, exist_ok=True)
-
-    total_rows = 0
-
-    for chunk_number, chunk in enumerate(
-        iter_performance(
-            perf_path,
-            chunksize=config["parameters"]["data"]["ingestion"]["chunksize"],
+        raw_dir = Path(config["catalog"]["base"])
+        orig_path = create_path(
+            raw_dir,
+            config["catalog"],
+            "raw_origination",
+            provider,
+            vintage,
         )
-    ):
-        chunk = transform_performance(chunk)
-        validation = validate_performance(chunk)
-        validation.raise_if_invalid()
+        perf_path = create_path(
+            raw_dir,
+            config["catalog"],
+            "raw_performance",
+            provider,
+            vintage,
+        )
 
-        write_parquet(chunk, perf_output_dir / f"part-{chunk_number:05d}.parquet")
+        output_origination = create_path(
+            raw_dir,
+            config["catalog"],
+            "origination_path",
+            provider,
+            vintage,
+            must_exist=False,
+        )
 
-        total_rows += len(chunk)
+        ## Origination ##
+        orig = read_origination(orig_path)
+        orig = transform_origination(orig)
+        orig_validation = validate_origination(orig)
+        orig_validation.raise_if_invalid()
 
-    logger.info(
-        "Ingestion completed: vintage=%s performance_rows=%s chunks=%s duration_seconds=%.2f",
-        vintage,
-        f"{total_rows:,}",
-        chunk_number + 1 if total_rows else 0,
-        perf_counter() - start,
-    )
+        write_parquet(orig, output_origination)
+        logger.info(
+            "Origination data written: rows=%s path=%s",
+            f"{len(orig):,}",
+            output_origination,
+        )
+
+        ## Performance ##
+
+        perf_output_dir = create_path(
+            raw_dir,
+            config["catalog"],
+            "performance_path",
+            provider,
+            vintage,
+            must_exist=False,
+        )
+        if perf_output_dir.exists():
+            logger.info(
+                "Removing existing performance output: path=%s", perf_output_dir
+            )
+            shutil.rmtree(perf_output_dir)
+        perf_output_dir.mkdir(parents=True, exist_ok=True)
+
+        total_rows = 0
+
+        for chunk_number, chunk in enumerate(
+            iter_performance(
+                perf_path,
+                chunksize=config["parameters"]["data"]["ingestion"]["chunksize"],
+            )
+        ):
+            chunk = transform_performance(chunk)
+            validation = validate_performance(chunk)
+            validation.raise_if_invalid()
+
+            write_parquet(chunk, perf_output_dir / f"part-{chunk_number:05d}.parquet")
+
+            total_rows += len(chunk)
+
+        logger.info(
+            "Ingestion completed: vintage=%s performance_rows=%s chunks=%s duration_seconds=%.2f",
+            vintage,
+            f"{total_rows:,}",
+            chunk_number + 1 if total_rows else 0,
+            perf_counter() - start,
+        )

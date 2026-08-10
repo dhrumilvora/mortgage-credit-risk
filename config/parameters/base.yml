@@ -12,17 +12,45 @@ parameters:
 
   data:
     data_provider: freddie_mac
-    vintage: 2019
+    all_vintages: [2015,2016,2017,2018,2019,2020,2021,2022]
+    # vintage: 2019
     id_col: "loan_id"
     time: "period"
     ingestion:
       skip: true
       chunksize: 2500000
     preprocess:
-      skip: true 
+      skip: false 
+      features:
+        numerical_features:
+          - credit_score
+          - original_dti
+          - number_of_borrowers
+          - original_ltv
+          - original_cltv
+          - mi_percentage
+          - original_upb
+          - original_interest_rate
+          - original_loan_term
+        categorical_features:
+          - first_time_homebuyer_flag
+          - property_type
+          - occupancy_status
+          - loan_purpose
+          - channel
+          - super_conforming_flag
+          - harp_indicator
+          - property_state
+  feature_engineering:
+    transformations:
+      credit_score:
+        enabled: true
+        method: bin
+        bins: [0,650,700,750,800,"+inf"]
+        labels: ["<650","650-699","700-749","750-799","800+"]
   modelling:
     skip: true
-    version: test
+    version: test_unbalanced
     vintages_train:
       - 2015
       - 2016
@@ -30,6 +58,29 @@ parameters:
     vintages_oot:
       - 2018
       - 2019
+    features:
+      numerical_features:
+        # - credit_score
+        - original_dti
+        - number_of_borrowers
+        - original_ltv
+        - original_cltv
+        - mi_percentage
+        - original_upb
+        - original_interest_rate
+        - original_loan_term
+      categorical_features:
+        - first_time_homebuyer_flag
+        - property_type
+        - occupancy_status
+        - loan_purpose
+        - channel
+        - super_conforming_flag
+        - harp_indicator
+        - property_state
+        - credit_score_bins
+      engineered_features:
+        - original_dti_missing
     validation_size : 0.2
     random_state: 42
     stratify: true
@@ -38,8 +89,8 @@ parameters:
       penalty: l2
       C: 1.0
       solver: lbfgs
-      max_iter: 1000
-      class_weight: balanced
+      max_iter: 100000
+      class_weight: null
   target:
     name : ever_90dpd_24m
     serious_delinquency_threshold: 3
@@ -49,11 +100,11 @@ parameters:
 
 
   evaluation:
-    skip: false
+    skip: true
     mode: existing_model  # same_run / existing_model same run will take the model from the current pipeline run
 
     model:
-      version: test
+      version: test_unbalanced
       type: logistic_regression
 
     datasets:

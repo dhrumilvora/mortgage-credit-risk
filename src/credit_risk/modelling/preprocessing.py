@@ -5,19 +5,16 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
 
-from credit_risk.features.eligibility_origination import (
-    CATEGORICAL_BASELINE_FEATURES,
-    ENGINEERED_BASELINE_FEATURES,
-    MODEL_FEATURES,
-    NUMERICAL_BASELINE_FEATURES,
-)
-
 
 def split_features_target(
     df: pd.DataFrame, config: dict
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Separate baseline predictors from the modelling target."""
-
+    MODEL_FEATURES = (
+        config["parameters"]["modelling"]["features"]["numerical_features"]
+        + config["parameters"]["modelling"]["features"]["categorical_features"]
+        + config["parameters"]["modelling"]["features"]["engineered_features"]
+    )
     target = config["parameters"]["target"]["name"]
 
     missing_features = sorted(set(MODEL_FEATURES) - set(df.columns))
@@ -36,7 +33,8 @@ def split_features_target(
     return X, y
 
 
-def build_preprocessor() -> ColumnTransformer:
+def build_preprocessor(config: dict) -> ColumnTransformer:
+
     numerical_pipeline = Pipeline(
         steps=[
             (
@@ -72,17 +70,17 @@ def build_preprocessor() -> ColumnTransformer:
             (
                 "numerical",
                 numerical_pipeline,
-                NUMERICAL_BASELINE_FEATURES,
+                config["parameters"]["modelling"]["features"]["numerical_features"],
             ),
             (
                 "categorical",
                 categorical_pipeline,
-                CATEGORICAL_BASELINE_FEATURES,
+                config["parameters"]["modelling"]["features"]["categorical_features"],
             ),
             (
                 "engineered",
                 "passthrough",
-                ENGINEERED_BASELINE_FEATURES,
+                config["parameters"]["modelling"]["features"]["engineered_features"],
             ),
         ],
         remainder="drop",

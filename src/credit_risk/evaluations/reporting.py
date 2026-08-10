@@ -99,14 +99,22 @@ def save_evaluation_json(
     evaluation_path = evaluation_dir / "evaluation_results.json"
 
     serializable_evaluation = _make_json_serializable(evaluation)
-
+    to_save = (
+        {
+            "ds_metrics": serializable_evaluation["ds_metrics"],
+            "confusion_matrix": serializable_evaluation["confusion_matrix"],
+            "credit_risk_metrics": serializable_evaluation["credit_risk_metrics"],
+            "risk_deciles": serializable_evaluation["risk_deciles"],
+            "calibration": serializable_evaluation["calibration"],
+        },
+    )
     with open(
         evaluation_path,
         "w",
         encoding="utf-8",
     ) as file:
         json.dump(
-            serializable_evaluation,
+            to_save,
             file,
             indent=4,
         )

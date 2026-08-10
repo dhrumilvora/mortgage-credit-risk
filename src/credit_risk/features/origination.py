@@ -1,10 +1,5 @@
 import pandas as pd
 
-from credit_risk.features.eligibility_origination import (
-    BASELINE_FEATURES,
-    IDENTIFIER_FEATURE,
-)
-
 NUMERIC_SENTINELS = {
     "original_dti": 999,
     "original_ltv": 999,
@@ -17,10 +12,15 @@ CATEGORICAL_SENTINELS = {
 }
 
 
-def select_baseline_features(df: pd.DataFrame) -> pd.DataFrame:
+def select_baseline_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     """Select identifiers and baseline origination features."""
-
-    columns = IDENTIFIER_FEATURE + BASELINE_FEATURES
+    parameters = config["parameters"]
+    columns = filter(
+        None,
+        [parameters["data"]["id_col"]]
+        + parameters["data"]["preprocess"]["features"]["numerical_features"]
+        + parameters["data"]["preprocess"]["features"]["categorical_features"],
+    )
 
     return df[columns].copy()
 

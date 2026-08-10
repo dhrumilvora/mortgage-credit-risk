@@ -61,7 +61,7 @@ def run_modelling_pipeline(config: dict) -> None:
         test_df,
         config,
     )
-    preprocessor = build_preprocessor()
+    preprocessor = build_preprocessor(config)
     X_train_transformed = preprocessor.fit_transform(X_train)
     X_validation_transformed = preprocessor.transform(X_validation)
 

@@ -19,16 +19,17 @@ from credit_risk.target.delinquency import (
     build_24m_serious_delinquency_target,
 )
 from credit_risk.utils.config import create_path
+from credit_risk.features.feature_engineering import apply_transformations
 
 logger = logging.getLogger(__name__)
 
 
-def build_origination(df: pd.DataFrame) -> pd.DataFrame:
+def build_origination(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     """Apply finalized origination preprocessing."""
 
-    validate_baseline_features(df.columns)
+    validate_baseline_features(df.columns, config)
 
-    result = origination.select_baseline_features(df)
+    result = origination.select_baseline_features(df, config)
     result = origination.normalize_sentinel_values(result)
     result = origination.add_missing_indicators(result)
 
@@ -73,157 +74,155 @@ def build_modeling_dataset(config: dict) -> None:
     """
 
     data_config = config["parameters"]["data"]
-
-    if data_config["preprocess"]["skip"]:
+    if config["parameters"]["data"]["preprocess"]["skip"]:
         logger.info("Preprocessing skipped by configuration")
         return
 
     start = perf_counter()
+    for vintage in config["parameters"]["data"]["all_vintages"]:
 
-    provider = data_config["data_provider"]
-    vintage = data_config["vintage"]
+        provider = data_config["data_provider"]
+        # vintage = data_config["vintage"]
 
-    logger.info(
-        "Dataset construction started: provider=%s vintage=%s",
-        provider,
-        vintage,
-    )
+        logger.info(
+            "Dataset construction started: provider=%s vintage=%s",
+            provider,
+            vintage,
+        )
 
-    # ------------------------------------------------------------------
-    # Resolve canonical input paths
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Resolve canonical input paths
+        # ------------------------------------------------------------------
 
-    origination_path = create_path(
-        config["catalog"]["base"],
-        config["catalog"],
-        "origination_path",
-        provider,
-        vintage,
-    )
+        origination_path = create_path(
+            config["catalog"]["base"],
+            config["catalog"],
+            "origination_path",
+            provider,
+            vintage,
+        )
 
-    performance_path = create_path(
-        config["catalog"]["base"],
-        config["catalog"],
-        "performance_path",
-        provider,
-        vintage,
-    )
+        performance_path = create_path(
+            config["catalog"]["base"],
+            config["catalog"],
+            "performance_path",
+            provider,
+            vintage,
+        )
 
-    # ------------------------------------------------------------------
-    # Read canonical datasets
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Read canonical datasets
+        # ------------------------------------------------------------------
 
-    logger.info("Reading canonical origination data: %s", origination_path)
-    origination_df = pd.read_parquet(origination_path)
+        logger.info("Reading canonical origination data: %s", origination_path)
+        origination_df = pd.read_parquet(origination_path)
 
-    logger.info("Reading canonical performance data: %s", performance_path)
-    performance_df = pd.read_parquet(performance_path)
+        logger.info("Reading canonical performance data: %s", performance_path)
+        performance_df = pd.read_parquet(performance_path)
 
-    logger.info(
-        "Canonical datasets loaded: origination_rows=%s performance_rows=%s",
-        f"{len(origination_df):,}",
-        f"{len(performance_df):,}",
-    )
+        logger.info(
+            "Canonical datasets loaded: origination_rows=%s performance_rows=%s",
+            f"{len(origination_df):,}",
+            f"{len(performance_df):,}",
+        )
 
-    # ------------------------------------------------------------------
-    # Preprocess each canonical dataset exactly once
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Preprocess each canonical dataset exactly once
+        # ------------------------------------------------------------------
 
-    origination_features = build_origination(
-        origination_df,
-    )
+        origination_features = build_origination(origination_df, config)
 
-    performance_features = build_performance(
-        performance_df,
-    )
+        performance_features = build_performance(
+            performance_df,
+        )
 
-    logger.info(
-        "Feature preprocessing completed: "
-        "origination_columns=%s performance_columns=%s",
-        origination_features.shape[1],
-        performance_features.shape[1],
-    )
+        logger.info(
+            "Feature preprocessing completed: "
+            "origination_columns=%s performance_columns=%s",
+            origination_features.shape[1],
+            performance_features.shape[1],
+        )
 
-    # ------------------------------------------------------------------
-    # Construct loan-month master dataset
-    #
-    # This dataset exists for target construction. Performance fields
-    # must not be carried into the final modelling feature population.
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Construct loan-month master dataset
+        #
+        # This dataset exists for target construction. Performance fields
+        # must not be carried into the final modelling feature population.
+        # ------------------------------------------------------------------
 
-    master = build_master_dataset(
-        origination_features,
-        performance_features,
-    )
+        master = build_master_dataset(
+            origination_features,
+            performance_features,
+        )
+        logger.info(
+            "Master loan-month dataset constructed: rows=%s columns=%s",
+            f"{len(master):,}",
+            master.shape[1],
+        )
 
-    logger.info(
-        "Master loan-month dataset constructed: rows=%s columns=%s",
-        f"{len(master):,}",
-        master.shape[1],
-    )
+        # ------------------------------------------------------------------
+        # Construct loan-level target
+        # ------------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # Construct loan-level target
-    # ------------------------------------------------------------------
+        target = build_24m_serious_delinquency_target(
+            master,
+            config,
+        )
 
-    target = build_24m_serious_delinquency_target(
-        master,
-        config,
-    )
+        logger.info(
+            "Target construction completed: eligible_loans=%s events=%s",
+            f"{len(target):,}",
+            f"{int(target['ever_90dpd_24m'].sum()):,}",
+        )
 
-    logger.info(
-        "Target construction completed: eligible_loans=%s events=%s",
-        f"{len(target):,}",
-        f"{int(target['ever_90dpd_24m'].sum()):,}",
-    )
+        # ------------------------------------------------------------------
+        # Construct final modelling dataset
+        #
+        # IMPORTANT:
+        # Model features come from origination_features, NOT master.
+        # This prevents monthly performance information from leaking into
+        # the origination-time model.
+        # ------------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # Construct final modelling dataset
-    #
-    # IMPORTANT:
-    # Model features come from origination_features, NOT master.
-    # This prevents monthly performance information from leaking into
-    # the origination-time model.
-    # ------------------------------------------------------------------
+        modeling = origination_features.merge(
+            target,
+            on="loan_id",
+            how="inner",
+            validate="one_to_one",
+        ).reset_index(drop=True)
 
-    modeling = origination_features.merge(
-        target,
-        on="loan_id",
-        how="inner",
-        validate="one_to_one",
-    ).reset_index(drop=True)
+        modeling = apply_transformations(modeling, config)
+        # ------------------------------------------------------------------
+        # Resolve output path
+        # ------------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # Resolve output path
-    # ------------------------------------------------------------------
+        model_input_path = create_path(
+            config["catalog"]["base"],
+            config["catalog"],
+            "model_input_path",
+            provider,
+            vintage,
+            must_exist=False,
+        )
 
-    model_input_path = create_path(
-        config["catalog"]["base"],
-        config["catalog"],
-        "model_input_path",
-        provider,
-        vintage,
-        must_exist=False,
-    )
+        # ------------------------------------------------------------------
+        # Persist modelling dataset
+        # ------------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # Persist modelling dataset
-    # ------------------------------------------------------------------
+        write_parquet(
+            modeling,
+            model_input_path,
+        )
 
-    write_parquet(
-        modeling,
-        model_input_path,
-    )
-
-    logger.info(
-        "Dataset construction completed: "
-        "provider=%s vintage=%s rows=%s columns=%s events=%s "
-        "path=%s duration_seconds=%.2f",
-        provider,
-        vintage,
-        f"{len(modeling):,}",
-        modeling.shape[1],
-        f"{int(modeling['ever_90dpd_24m'].sum()):,}",
-        model_input_path,
-        perf_counter() - start,
-    )
+        logger.info(
+            "Dataset construction completed: "
+            "provider=%s vintage=%s rows=%s columns=%s events=%s "
+            "path=%s duration_seconds=%.2f",
+            provider,
+            vintage,
+            f"{len(modeling):,}",
+            modeling.shape[1],
+            f"{int(modeling['ever_90dpd_24m'].sum()):,}",
+            model_input_path,
+            perf_counter() - start,
+        )
