@@ -33,10 +33,37 @@ catalog:
     folder_name: "04_model_split"
     file_name: "train_split"
     file_type: "parquet"
-  test_df:
+  validation_df:
     folder_name: "04_model_split"
     file_name: "validation_split"
     file_type: "parquet"
+
+### Model Artifacts
+  model:
+      folder_name: 05_artifacts
+      file_name: model
+      file_type: joblib
+
+  preprocessor:
+      folder_name: 05_artifacts
+      file_name: preprocessor
+      file_type: joblib
+
+  training_metadata:
+      folder_name: 05_artifacts
+      file_name: training_metadata
+      file_type: json
+
+  training_config:
+      folder_name: 05_artifacts
+      file_name: training_config
+      file_type: yaml
+
+  experiment_metadata:
+      folder_name: 05_artifacts
+      file_name: experiment
+      file_type: json
+
 
 ### Model Input QC  
 

@@ -20,12 +20,6 @@ def load_modelling_vintage(config: dict, vintages: list[int]) -> pd.DataFrame:
             provider,
             vintage,
         )
-        logger.info(
-            "Loading model input: provider=%s vintage=%s path=%s",
-            provider,
-            vintage,
-            path,
-        )
         df = pd.read_parquet(path)
         df["vintage"] = vintage
         frames.append(df)
@@ -37,11 +31,4 @@ def load_modelling_vintage(config: dict, vintages: list[int]) -> pd.DataFrame:
             "Duplicate loan_id values detected across modelling vintages: "
             f"{int(duplicate_loans.sum()):,}"
         )
-    logger.info(
-        "Modelling vintages loaded: vintages=%s rows=%s columns=%s",
-        vintages,
-        f"{len(final_df):,}",
-        final_df.shape[1],
-    )
-
     return final_df

@@ -1,20 +1,33 @@
-IDENTIFIER_FEATURE = ["loan_id"]
-BASELINE_FEATURES = [
+"""Origination feature eligibility definitions."""
+
+IDENTIFIER_FEATURE = [
+    "loan_id",
+]
+
+
+NUMERICAL_BASELINE_FEATURES = [
     # Borrower attributes
     "credit_score",
     "original_dti",
     "number_of_borrowers",
-    "first_time_homebuyer_flag",
     # Collateral / leverage
     "original_ltv",
     "original_cltv",
     "mi_percentage",
-    "property_type",
-    "occupancy_status",
     # Loan structure
     "original_upb",
     "original_interest_rate",
     "original_loan_term",
+]
+
+
+CATEGORICAL_BASELINE_FEATURES = [
+    # Borrower attributes
+    "first_time_homebuyer_flag",
+    # Collateral
+    "property_type",
+    "occupancy_status",
+    # Loan structure
     "loan_purpose",
     "channel",
     "super_conforming_flag",
@@ -23,6 +36,9 @@ BASELINE_FEATURES = [
     # Geography
     "property_state",
 ]
+
+
+BASELINE_FEATURES = NUMERICAL_BASELINE_FEATURES + CATEGORICAL_BASELINE_FEATURES
 
 
 CHALLENGER_FEATURES = [
@@ -56,13 +72,19 @@ REDUNDANT_FIELDS = [
     "maturity_date",
 ]
 
+ENGINEERED_BASELINE_FEATURES = [
+    "original_dti_missing",
+]
+
+MODEL_FEATURES = BASELINE_FEATURES + ENGINEERED_BASELINE_FEATURES
+
 
 def validate_baseline_features(columns) -> None:
     """Validate that all required baseline features are available."""
 
     available = set(columns)
-    required_cols = BASELINE_FEATURES + IDENTIFIER_FEATURE
-    required = set(required_cols)
+
+    required = set(BASELINE_FEATURES + IDENTIFIER_FEATURE)
 
     missing = sorted(required - available)
 

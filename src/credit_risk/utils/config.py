@@ -41,10 +41,25 @@ def create_path(
     base_path: str | Path,
     catalog: dict,
     key: str,
-    data_provider: str | None = None,
-    year: int | None = None,
+    *subfolders: str | int,
     must_exist: bool = True,
 ) -> Path:
+    """
+    Construct a path from the configured catalog entry.
+
+    Parameters
+    ----------
+    base_path
+        Root directory.
+    catalog
+        Catalog configuration.
+    key
+        Catalog key.
+    *subfolders
+        Optional hierarchy appended below the configured folder.
+    must_exist
+        If False, parent directories are created as required.
+    """
 
     if key not in catalog:
         raise KeyError(f"Catalog key not found: {key}")
@@ -52,27 +67,26 @@ def create_path(
     file_config = catalog[key]
 
     path = Path(base_path) / file_config["folder_name"]
-    if data_provider is not None:
-        path /= data_provider
 
-    if year is not None:
-        path /= str(year)
+    for folder in subfolders:
+        path /= str(folder)
 
-    if not must_exist and not path.exists():
+    if not must_exist:
         path.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-    if file_config["file_type"] != "folder":
-        file_path = path / (f"{file_config['file_name']}.{file_config['file_type']}")
-    else:
-        file_path = path / f"{file_config['file_name']}"
-        if not must_exist and not file_path.exists():
-            path.mkdir(
+    if file_config["file_type"] == "folder":
+        file_path = path / file_config["file_name"]
+
+        if not must_exist:
+            file_path.mkdir(
                 parents=True,
                 exist_ok=True,
             )
+    else:
+        file_path = path / f"{file_config['file_name']}.{file_config['file_type']}"
 
     if must_exist and not file_path.exists():
         raise FileNotFoundError(f"File does not exist: {file_path}")

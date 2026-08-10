@@ -21,7 +21,8 @@ parameters:
     preprocess:
       skip: true 
   modelling:
-    skip: true
+    skip: false
+    version: test
     vintages_train:
       - 2015
       - 2016
@@ -32,7 +33,13 @@ parameters:
     validation_size : 0.2
     random_state: 42
     stratify: true
-
+    algorithm: logistic_regression
+    logistic_regression:
+      penalty: l2
+      C: 1.0
+      solver: lbfgs
+      max_iter: 1000
+      class_weight: balanced
   target:
     name : ever_90dpd_24m
     serious_delinquency_threshold: 3

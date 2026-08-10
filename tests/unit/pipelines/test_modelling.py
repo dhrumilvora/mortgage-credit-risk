@@ -1,7 +1,5 @@
 """Tests for modelling pipeline orchestration."""
 
-from pathlib import Path
-
 import pandas as pd
 import pytest
 
@@ -17,9 +15,22 @@ def config() -> dict:
             "base": "unused",
         },
         "parameters": {
+            "target": {
+                "name": "ever_90dpd_24m",
+            },
             "modelling": {
                 "skip": False,
                 "vintages_train": [2015],
+                "validation_size": 0.20,
+                "random_state": 42,
+                "stratify": True,
+                "logistic_regression": {
+                    "penalty": "l2",
+                    "C": 1.0,
+                    "solver": "lbfgs",
+                    "max_iter": 1000,
+                    "class_weight": "balanced",
+                },
             },
         },
     }
@@ -32,7 +43,7 @@ def development_df() -> pd.DataFrame:
     return pd.DataFrame(
         {
             "loan_id": [1, 2, 3, 4],
-            "vintage": [2015, 2015, 2015, 2015],
+            "vintage": [2015] * 4,
             "ever_90dpd_24m": [0, 0, 0, 1],
         }
     )
@@ -43,10 +54,32 @@ def test_modelling_pipeline_orchestration(
     config: dict,
     development_df: pd.DataFrame,
 ) -> None:
-    """Pipeline should load, split, and persist development data."""
+    """Pipeline should orchestrate the modelling workflow."""
 
     train_df = development_df.iloc[:3].copy()
     validation_df = development_df.iloc[3:].copy()
+
+    X_train = pd.DataFrame(
+        {
+            "credit_score": [700, 720, 680],
+        }
+    )
+
+    y_train = pd.Series(
+        [0, 0, 1],
+        name="ever_90dpd_24m",
+    )
+
+    X_validation = pd.DataFrame(
+        {
+            "credit_score": [650],
+        }
+    )
+
+    y_validation = pd.Series(
+        [1],
+        name="ever_90dpd_24m",
+    )
 
     calls = {
         "writes": [],
@@ -54,21 +87,43 @@ def test_modelling_pipeline_orchestration(
     }
 
     def mock_load(config_arg, vintages):
-        calls["load_config"] = config_arg
+        calls["config"] = config_arg
         calls["vintages"] = vintages
-
         return development_df
 
     def mock_split(df, config_arg):
         calls["split_df"] = df
         calls["split_config"] = config_arg
-
         return train_df, validation_df
 
-    paths = {
-        "train_df": Path("train.parquet"),
-        "validation_df": Path("validation.parquet"),
-    }
+    def mock_split_features_target(df, config_arg):
+        if df is train_df:
+            return X_train, y_train
+
+        if df is validation_df:
+            return X_validation, y_validation
+
+        pytest.fail("Unexpected dataframe passed to split_features_target.")
+
+    class MockPreprocessor:
+        def __init__(self):
+            self.fit_transform_called = False
+            self.transform_called = False
+
+        def fit_transform(self, X):
+            self.fit_transform_called = True
+            calls["fit_transform_input"] = X
+            return X
+
+        def transform(self, X):
+            self.transform_called = True
+            calls["transform_input"] = X
+            return X
+
+    preprocessor = MockPreprocessor()
+
+    def mock_build_preprocessor():
+        return preprocessor
 
     def mock_create_path(
         base_path,
@@ -77,8 +132,7 @@ def test_modelling_pipeline_orchestration(
         must_exist=True,
     ):
         calls["path_keys"].append(key)
-
-        return paths[key]
+        return f"/tmp/{key}.parquet"
 
     def mock_write_parquet(df, path):
         calls["writes"].append((df, path))
@@ -94,6 +148,16 @@ def test_modelling_pipeline_orchestration(
     )
 
     monkeypatch.setattr(
+        "credit_risk.pipelines.modelling.split_features_target",
+        mock_split_features_target,
+    )
+
+    monkeypatch.setattr(
+        "credit_risk.pipelines.modelling.build_preprocessor",
+        mock_build_preprocessor,
+    )
+
+    monkeypatch.setattr(
         "credit_risk.pipelines.modelling.create_path",
         mock_create_path,
     )
@@ -105,36 +169,29 @@ def test_modelling_pipeline_orchestration(
 
     result = run_modelling_pipeline(config)
 
-    # Pipeline is an orchestrator and should not return datasets.
     assert result is None
 
-    # Correct vintages should be loaded.
+    assert calls["config"] is config
     assert calls["vintages"] == [2015]
-    assert calls["load_config"] is config
 
-    # Loaded development population should be passed directly
-    # to the splitting stage.
     assert calls["split_df"] is development_df
     assert calls["split_config"] is config
 
-    # Correct output paths should be resolved.
     assert calls["path_keys"] == [
         "train_df",
         "validation_df",
     ]
 
-    # Both populations should be persisted.
     assert len(calls["writes"]) == 2
 
-    written_train_df, written_train_path = calls["writes"][0]
+    assert calls["writes"][0][0] is train_df
+    assert calls["writes"][1][0] is validation_df
 
-    assert written_train_df is train_df
-    assert written_train_path == Path("train.parquet")
+    assert preprocessor.fit_transform_called
+    assert preprocessor.transform_called
 
-    written_validation_df, written_validation_path = calls["writes"][1]
-
-    assert written_validation_df is validation_df
-    assert written_validation_path == Path("validation.parquet")
+    assert calls["fit_transform_input"] is X_train
+    assert calls["transform_input"] is X_validation
 
 
 def test_modelling_pipeline_skip(
@@ -146,7 +203,7 @@ def test_modelling_pipeline_skip(
     config["parameters"]["modelling"]["skip"] = True
 
     def fail_if_called(*args, **kwargs):
-        pytest.fail("Modelling stage should not run when modelling is skipped.")
+        pytest.fail("Modelling pipeline should not execute when skip=True.")
 
     monkeypatch.setattr(
         "credit_risk.pipelines.modelling.load_modelling_vintage",
@@ -165,6 +222,16 @@ def test_modelling_pipeline_skip(
 
     monkeypatch.setattr(
         "credit_risk.pipelines.modelling.write_parquet",
+        fail_if_called,
+    )
+
+    monkeypatch.setattr(
+        "credit_risk.pipelines.modelling.split_features_target",
+        fail_if_called,
+    )
+
+    monkeypatch.setattr(
+        "credit_risk.pipelines.modelling.build_preprocessor",
         fail_if_called,
     )
 

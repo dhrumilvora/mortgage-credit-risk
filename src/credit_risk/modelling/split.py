@@ -36,17 +36,6 @@ def stratified_data_split(
     if df[target].nunique() < 2:
         raise ValueError(f"Target must contain at least two classes: {target}")
 
-    logger.info(
-        "Development split started: "
-        "rows=%s validation_size=%.2f "
-        "target=%s event_rate=%.6f stratify=%s",
-        f"{len(df):,}",
-        validation_size,
-        target,
-        df[target].mean(),
-        stratify,
-    )
-
     stratify_values = df[target] if stratify else None
 
     train_df, validation_df = train_test_split(
@@ -58,15 +47,5 @@ def stratified_data_split(
 
     train_df = train_df.reset_index(drop=True)
     validation_df = validation_df.reset_index(drop=True)
-
-    logger.info(
-        "Development split completed: "
-        "train_rows=%s validation_rows=%s "
-        "train_event_rate=%.6f validation_event_rate=%.6f",
-        f"{len(train_df):,}",
-        f"{len(validation_df):,}",
-        train_df[target].mean(),
-        validation_df[target].mean(),
-    )
 
     return train_df, validation_df
