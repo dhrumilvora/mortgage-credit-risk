@@ -13,6 +13,7 @@ from credit_risk.pipelines.data_preprocess import build_modeling_dataset
 from credit_risk.pipelines.ingest import ingest
 from credit_risk.pipelines.reporting import run_reporting_pipeline
 from credit_risk.pipelines.modelling import run_modelling_pipeline
+from credit_risk.pipelines.evaluation import run_evaluation_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ def run_pipeline(project_path: str | Path) -> None:
     build_modeling_dataset(config)
     run_reporting_pipeline(config)
     run_modelling_pipeline(config)
-
+    run_evaluation_pipeline(config)
     logger.info(
         "━━ Pipeline completed ━━ duration_seconds=%.2f", perf_counter() - start
     )

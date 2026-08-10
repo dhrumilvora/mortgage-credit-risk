@@ -25,12 +25,18 @@ def run_modelling_pipeline(config: dict) -> None:
     start = perf_counter()
 
     development_vintages = modelling_config["vintages_train"]
-
+    oot_vintages = modelling_config["vintages_oot"]
     logger.info(
-        f"Vintages being considered in model training pipeline: {", ".join(np.array(development_vintages).astype(str))}"
+        "Vintages being considered in model training pipeline: %s",
+        ", ".join(np.array(development_vintages).astype(str)),
+    )
+    logger.info(
+        "Vintages being considered for OOT: %s",
+        ", ".join(np.array(oot_vintages).astype(str)),
     )
 
     development_df = load_modelling_vintage(config, development_vintages)
+    oot_df = load_modelling_vintage(config, oot_vintages)
     train_df, test_df = stratified_data_split(development_df, config)
     train_path = create_path(
         config["catalog"]["base"], config["catalog"], "train_df", must_exist=False
@@ -38,9 +44,13 @@ def run_modelling_pipeline(config: dict) -> None:
     test_path = create_path(
         config["catalog"]["base"], config["catalog"], "validation_df", must_exist=False
     )
+    oot_path = create_path(
+        config["catalog"]["base"], config["catalog"], "oot_df", must_exist=False
+    )
 
     write_parquet(train_df, train_path)
     write_parquet(test_df, test_path)
+    write_parquet(oot_df, oot_path)
 
     X_train, y_train = split_features_target(
         train_df,

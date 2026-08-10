@@ -21,7 +21,7 @@ parameters:
     preprocess:
       skip: true 
   modelling:
-    skip: false
+    skip: true
     version: test
     vintages_train:
       - 2015
@@ -46,3 +46,32 @@ parameters:
     max_eligible_start_age: 1
     horizon_months: 24
     voluntary_payoffs_zbc: "01"
+
+
+  evaluation:
+    skip: false
+    mode: existing_model  # same_run / existing_model same run will take the model from the current pipeline run
+
+    model:
+      version: test
+      type: logistic_regression
+
+    datasets:
+      validation: true
+      oot: true
+
+    classification:
+      threshold: 0.5
+
+    risk:
+      n_deciles: 10
+
+    calibration:
+      bins:
+        - [0.00, 0.01]
+        - [0.01, 0.02]
+        - [0.02, 0.05]
+        - [0.05, 0.10]
+        - [0.10, 0.20]
+        - [0.20, 0.50]
+        - [0.50, 1.00]

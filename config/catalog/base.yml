@@ -37,7 +37,10 @@ catalog:
     folder_name: "04_model_split"
     file_name: "validation_split"
     file_type: "parquet"
-
+  oot_df:
+    folder_name: "04_model_split"
+    file_name: "oot_split"
+    file_type: "parquet"
 ### Model Artifacts
   model:
       folder_name: 05_artifacts
@@ -63,6 +66,11 @@ catalog:
       folder_name: 05_artifacts
       file_name: experiment
       file_type: json
+
+  model_evaluation:
+    folder_name: "05_artifacts"
+    file_name: "model_evaluation"
+    file_type: "folder"
 
 
 ### Model Input QC  
