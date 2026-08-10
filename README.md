@@ -1,253 +1,84 @@
-# 🏠 Mortgage Credit Risk Prediction
+# Mortgage Credit Risk Prediction
 
-An in-progress mortgage credit-risk modelling project using Freddie Mac's Single-Family Loan-Level Dataset. Its implemented data-construction and quality-reporting components prepare an origination-time modelling dataset for **future mortgage delinquency risk**.
+A configuration-driven Python framework for building, training, and evaluating an origination-time mortgage credit-risk model from Freddie Mac Single-Family Loan-Level data.
 
-The core question behind the project is:
+The baseline model estimates the probability that a mortgage reaches 90+ days past due (DPD), or REO acquisition, during its first 24 months of observable performance history.
 
-> **Using information known at mortgage origination, how likely is a mortgage to become seriously delinquent within its first 24 months?**
+## What is implemented
 
-Unlike a typical credit-risk dataset where each borrower appears once with a predefined default label, Freddie Mac provides the **monthly performance history of each mortgage**. This makes it possible to model how credit risk evolves over time.
+- Ingestion and schema validation for Freddie Mac origination and monthly-performance files.
+- Canonical Parquet datasets and vintage-specific loan-level modelling inputs.
+- Leakage-safe target construction: performance data defines the outcome but is not used as an origination-time predictor.
+- Sentinel-value normalization, a DTI-missingness indicator, and configurable feature engineering (currently credit-score bands).
+- Multi-vintage development and out-of-time (OOT) population loading.
+- Reproducible, stratified development/validation splitting.
+- Train-only fitted preprocessing: median imputation for numeric fields, constant imputation plus one-hot encoding for categorical fields.
+- Logistic-regression training, versioned model/preprocessor artifacts, and training metadata.
+- Validation and OOT evaluation with JSON, Excel, and chart outputs.
 
----
+## Target and cohort
 
-## 🎯 Problem
+`ever_90dpd_24m` is positive when, within the first 24 months of performance history, a loan has either:
 
-The implemented target is whether a mortgage reaches **90+ Days Past Due (DPD)** or REO acquisition within its first 24 months of performance history: `ever_90dpd_24m`.
+- a numeric delinquency status of at least `3` (approximately 90+ DPD); or
+- an `RA` (REO acquisition) status.
 
-Freddie Mac represents delinquency approximately as the number of monthly payments the borrower is behind.
+To make the outcome observable, a loan must first appear at loan age 0 or 1. Loans with an unobserved early period, or an unobservable early termination other than a voluntary payoff, are excluded. A voluntary payoff (`ZBC = 01`) without prior serious delinquency is treated as a non-event.
 
-| Delinquency Status | Approximate Meaning |
-| -----------------: | ------------------- |
-|                  0 | Current             |
-|                  1 | ~30 DPD             |
-|                  2 | ~60 DPD             |
-|                  3 | ~90 DPD             |
-|                 4+ | 120+ DPD            |
+This is a serious-delinquency / credit-deterioration target, not a realized-loss model. It is related to probability of default (PD), not directly to loss given default (LGD) or exposure at default (EAD).
 
-The cleaned numeric representation used throughout the project is `delq_numeric`.
+## Pipeline
 
-```text id="rks3mw"
-delq_numeric >= 3 → Serious Delinquency
+```text
+Raw Freddie Mac data
+  -> canonical origination and performance Parquet
+  -> origination/performance preprocessing
+  -> loan-month master dataset
+  -> 24-month target and vintage-specific model input
+  -> development/OOT loading and development split
+  -> fitted preprocessing and logistic-regression training
+  -> model artifacts and validation/OOT evaluation reports
 ```
 
-The model therefore estimates a **forward-looking probability of serious delinquency**, rather than simply classifying loans based on their eventual outcome.
+The package entry point runs every stage; each stage can be skipped through configuration:
 
----
+```python
+from pathlib import Path
+from credit_risk import run_pipeline
 
-## 🗃️ Data
-
-The project uses Freddie Mac's Single-Family Loan-Level Dataset.
-
-The data contains two main components.
-
-### Origination Data
-
-Information describing the mortgage when it was originated:
-
-* Credit score
-* Debt-to-Income ratio (DTI)
-* Loan-to-Value ratio (LTV)
-* Original loan balance
-* Interest rate
-* Loan term
-* Loan purpose
-* Occupancy status
-* Property and geographic characteristics
-
-### Monthly Performance Data
-
-Each mortgage is subsequently tracked over time:
-
-* Current loan balance
-* Loan age
-* Current interest rate
-* Remaining maturity
-* Delinquency status
-* Modification status
-* Loan termination / zero-balance information
-
-This allows the project to reconstruct the **monthly history of each mortgage**.
-
----
-
-## 🧠 Modelling Approach
-
-The raw monthly performance data is transformed into a **point-in-time modelling dataset**.
-
-For every observation date:
-
-```text id="hn7g34"
-                   Observation Date
-                          │
-        Past              │             Future
-◄─────────────────────────┼──────────────────────────►
-                          │
-              Information known today
-                          │
-                          └──── Next 12 months ────►
-                                  90+ DPD?
+run_pipeline(Path("."))
 ```
 
-The current dataset uses origination-time information only. Monthly performance data is used to construct and validate the target, not as a model feature source.
+Before a full run, configure the data locations and enabled stages in `config/catalog/base.yml` and `config/parameters/base.yml`. The default configuration deliberately skips ingestion, modelling, and evaluation, so a run can reuse existing artifacts or execute only selected stages.
 
-This is particularly important because using information from later months would introduce **look-ahead bias / target leakage**.
+## Baseline predictors
 
----
+The predictor set is controlled in `parameters.modelling.features`. It includes borrower credit and capacity, leverage, mortgage structure, program, channel, and state fields, plus configured engineered features. The baseline configuration uses credit-score bands in place of raw credit score.
 
-## 🔧 Feature Engineering
+Performance-history variables are reserved for target construction. Future loan-month models may add point-in-time behavioural features, provided they are available as of the observation date.
 
-Features combine static mortgage characteristics with information derived from the loan's historical performance.
+## Outputs
 
-### Borrower Risk
+Configured paths are rooted at `data/` by default.
 
-* Credit score
-* DTI
-* Original LTV / CLTV
-* Occupancy status
+| Output | Purpose |
+|---|---|
+| `03_processed/.../model-input.parquet` | One loan per row with origination-time features and target |
+| `04_model_split/*.parquet` | Persisted training, validation, and OOT populations |
+| `05_artifacts/<version>/<algorithm>/` | Model, fitted preprocessor, training metadata, and training configuration |
+| `05_artifacts/model_evaluation/<version>/<algorithm>/<dataset>/` | Evaluation JSON, Excel workbook, and ROC, KS, decile, and calibration charts |
+| `06_reporting/data_quality/pipeline_qc.xlsx` | Data-quality workbook |
 
-### Mortgage Characteristics
+## Evaluation
 
-* Original balance
-* Current unpaid principal balance
-* Interest rate
-* Loan age
-* Remaining maturity
-* Loan purpose
+For enabled validation and OOT datasets, the framework produces classification metrics, ROC-AUC, PR-AUC, KS, Brier score, log loss, confusion matrices, risk deciles, calibration tables, and diagnostic charts. The classification threshold, risk deciles, calibration bins, model version, and evaluation mode are all configuration-driven.
 
-### Historical Behaviour (planned)
+## Project documentation
 
-The monthly performance history allows behavioural features such as:
+- [Project flow](docs/project_flow.md) — architecture, stages, configuration, and artifacts.
+- [Modelling methodology](docs/modelling-methodology.md) — target, cohort, features, preprocessing, training, and evaluation decisions.
+- [Credit-risk reference guide](docs/credit-risk-reference-guide.md) — terminology and Freddie Mac field guidance.
 
-* Previous delinquency
-* Maximum historical delinquency
-* Number of previous delinquency episodes
-* Months since previous delinquency
-* Recent delinquency behaviour
-* Historical cure behaviour
+## Current limitations
 
-These point-in-time features are planned for a future loan-month modelling version. They are not part of the current origination-time model input.
-
----
-
-## 🤖 Models (planned)
-
-The intended modelling approach is a **champion–challenger setup**. Model training, validation, calibration, and out-of-time evaluation are not implemented yet.
-
-### Logistic Regression
-
-Logistic Regression provides an interpretable credit-risk baseline and allows the relationship between borrower characteristics and delinquency risk to be examined directly.
-
-### Gradient Boosting
-
-A gradient-boosted decision-tree model is used as a nonlinear challenger capable of capturing interactions and nonlinear relationships between risk factors.
-
-The comparison is not based purely on predictive accuracy.
-
-Models are evaluated across:
-
-* Discrimination
-* Calibration
-* Stability
-* Interpretability
-
----
-
-## 📊 Model Evaluation (planned)
-
-Serious mortgage delinquency is an imbalanced outcome, making standard accuracy a poor measure of model quality.
-
-Evaluation therefore focuses on:
-
-* ROC-AUC
-* Precision-Recall AUC
-* KS statistic
-* Precision
-* Recall
-* Lift
-* Risk capture
-* Probability calibration
-
-A practical question is also considered:
-
-> **If only the highest-risk 5–10% of mortgages could be reviewed, what percentage of future serious delinquencies would the model identify?**
-
----
-
-## ⏳ Out-of-Time Validation (planned)
-
-Mortgage credit risk changes with economic conditions.
-
-Rather than randomly mixing observations across years, models are evaluated using **time-based validation**.
-
-```text id="a8t1kn"
-TIME ─────────────────────────────────────────────►
-
-TRAIN                 VALIDATION              TEST
-
-████████████████      ██████████              █████████
-Past                                            Future
-```
-
-The final test period therefore represents a genuinely unseen future period.
-
-Performance can also be examined across:
-
-* Origination vintages
-* Credit-score bands
-* LTV bands
-* Loan age
-* Calendar periods
-
-This helps determine whether model performance remains stable across different parts of the mortgage portfolio.
-
----
-
-## 🏦 Credit Risk Interpretation
-
-The project predicts **serious delinquency**, which is not necessarily the same as realized financial loss.
-
-A borrower reaching 90+ DPD may subsequently:
-
-```text id="0r73hj"
-90+ DPD
-   │
-   ├── Cure
-   ├── Modify
-   ├── Remain Delinquent
-   └── Progress toward Default / Foreclosure
-```
-
-In traditional credit-risk terminology, expected loss is often decomposed into:
-
-```text id="0fqhkn"
-Probability of Default (PD)
-          ×
-Loss Given Default (LGD)
-          ×
-Exposure at Default (EAD)
-          │
-          ▼
-     Expected Loss
-```
-
-The model developed here focuses on the **probability of credit deterioration** and does not treat 90+ DPD as equivalent to realized credit loss.
-
----
-
-## ⚠️ Key Modelling Challenges
-
-Mortgage data introduces several complications beyond standard binary classification.
-
-**Prepayment** — Borrowers may refinance or repay their mortgage before the end of the prediction window.
-
-**Cures** — Delinquency is not always permanent. Borrowers can transition back to current status.
-
-**Economic cycles** — Relationships between borrower characteristics and delinquency can change across interest-rate and economic environments.
-
-**Repeated observations** — The same mortgage is observed repeatedly over its lifetime.
-
-**Population drift** — Mortgage vintages originated under different underwriting and economic conditions may behave differently.
-
-**Data leakage** — Monthly performance information occurring after the observation date must never enter model features.
-
-Handling these correctly is a central part of the project rather than simply preprocessing before model training.
+The current trained algorithm is logistic regression. Model calibration, challenger models, explainability, stability analysis, and production monitoring remain future work. Data and model outputs are local project artifacts and should be independently validated before any credit decisioning use.

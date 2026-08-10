@@ -82,8 +82,6 @@ def build_modeling_dataset(config: dict) -> None:
     for vintage in config["parameters"]["data"]["all_vintages"]:
 
         provider = data_config["data_provider"]
-        # vintage = data_config["vintage"]
-
         logger.info(
             "Dataset construction started: provider=%s vintage=%s",
             provider,

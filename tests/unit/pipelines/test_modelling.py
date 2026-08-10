@@ -21,6 +21,9 @@ def config() -> dict:
             "modelling": {
                 "skip": False,
                 "vintages_train": [2015],
+                "vintages_oot": [2016],
+                "version": "unit-test",
+                "algorithm": "logistic_regression",
                 "validation_size": 0.20,
                 "random_state": 42,
                 "stratify": True,
@@ -86,10 +89,12 @@ def test_modelling_pipeline_orchestration(
         "path_keys": [],
     }
 
+    oot_df = development_df.assign(vintage=2016)
+
     def mock_load(config_arg, vintages):
         calls["config"] = config_arg
-        calls["vintages"] = vintages
-        return development_df
+        calls.setdefault("vintages", []).append(vintages)
+        return development_df if vintages == [2015] else oot_df
 
     def mock_split(df, config_arg):
         calls["split_df"] = df
@@ -122,13 +127,14 @@ def test_modelling_pipeline_orchestration(
 
     preprocessor = MockPreprocessor()
 
-    def mock_build_preprocessor():
+    def mock_build_preprocessor(config_arg):
         return preprocessor
 
     def mock_create_path(
         base_path,
         catalog,
         key,
+        *subfolders,
         must_exist=True,
     ):
         calls["path_keys"].append(key)
@@ -167,12 +173,22 @@ def test_modelling_pipeline_orchestration(
         mock_write_parquet,
     )
 
+    monkeypatch.setattr(
+        "credit_risk.pipelines.modelling.train_logistic_regression",
+        lambda *args: "model",
+    )
+
+    monkeypatch.setattr(
+        "credit_risk.pipelines.modelling.save_artifacts",
+        lambda *args: calls.setdefault("artifacts_saved", True),
+    )
+
     result = run_modelling_pipeline(config)
 
     assert result is None
 
     assert calls["config"] is config
-    assert calls["vintages"] == [2015]
+    assert calls["vintages"] == [[2015], [2016]]
 
     assert calls["split_df"] is development_df
     assert calls["split_config"] is config
@@ -180,18 +196,21 @@ def test_modelling_pipeline_orchestration(
     assert calls["path_keys"] == [
         "train_df",
         "validation_df",
+        "oot_df",
     ]
 
-    assert len(calls["writes"]) == 2
+    assert len(calls["writes"]) == 3
 
     assert calls["writes"][0][0] is train_df
     assert calls["writes"][1][0] is validation_df
+    assert calls["writes"][2][0] is oot_df
 
     assert preprocessor.fit_transform_called
     assert preprocessor.transform_called
 
     assert calls["fit_transform_input"] is X_train
     assert calls["transform_input"] is X_validation
+    assert calls["artifacts_saved"]
 
 
 def test_modelling_pipeline_skip(

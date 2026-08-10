@@ -89,7 +89,7 @@ parameters:
       penalty: l2
       C: 1.0
       solver: lbfgs
-      max_iter: 100000
+      max_iter: 1000
       class_weight: null
   target:
     name : ever_90dpd_24m
