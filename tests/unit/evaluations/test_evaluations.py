@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from credit_risk.evaluations.evaluations import evaluate_dataset, generate_predictions
+from credit_risk.evaluations.reporting import save_evaluation_json
 
 
 class IdentityPreprocessor:
@@ -41,3 +42,23 @@ def test_evaluate_dataset_rejects_single_class_target() -> None:
             y_true=np.array([0, 0]), y_pred=np.array([0, 0]), y_proba=np.array([0.1, 0.2]),
             n_deciles=2, calibration_bins=[[0.0, 1.0]],
         )
+
+
+def test_evaluation_json_is_saved_as_an_object(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "credit_risk.evaluations.reporting._get_evaluation_dir",
+        lambda *args: tmp_path,
+    )
+    evaluation = {
+        "ds_metrics": {}, "confusion_matrix": {}, "credit_risk_metrics": {},
+        "risk_deciles": [], "calibration": [],
+    }
+
+    save_evaluation_json(evaluation, "validation", {})
+
+    import json
+
+    saved = json.loads((tmp_path / "evaluation_results.json").read_text())
+    assert isinstance(saved, dict)

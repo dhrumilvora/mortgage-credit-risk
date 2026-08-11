@@ -68,6 +68,10 @@ If serious delinquency precedes termination, the loan remains an event regardles
 | `super_conforming_flag` | Higher-conforming-limit indicator | Loan-structure information |
 | `harp_indicator` | HARP participation | Program information |
 
+### Configured transformed features
+
+The active modelling configuration uses `credit_score_bins`, `original_ltv_bins`, and `original_cltv_bins` as categorical representations of their respective origination fields. It also includes `original_upb_log`, the natural logarithm of positive original UPB values, alongside the raw UPB field. These are model representations rather than new source-data fields.
+
 ## Common categorical codes
 
 | Field | Code | Meaning |

@@ -9,7 +9,7 @@ The baseline model estimates the probability that a mortgage reaches 90+ days pa
 - Ingestion and schema validation for Freddie Mac origination and monthly-performance files.
 - Canonical Parquet datasets and vintage-specific loan-level modelling inputs.
 - Leakage-safe target construction: performance data defines the outcome but is not used as an origination-time predictor.
-- Sentinel-value normalization, a DTI-missingness indicator, and configurable feature engineering (currently credit-score bands).
+- Sentinel-value normalization, a DTI-missingness indicator, and configurable feature engineering: credit-score, DTI, LTV, and CLTV bands plus a log-transformed original UPB.
 - Multi-vintage development and out-of-time (OOT) population loading.
 - Reproducible, stratified development/validation splitting.
 - Train-only fitted preprocessing: median imputation for numeric fields, constant imputation plus one-hot encoding for categorical fields.
@@ -49,7 +49,7 @@ from credit_risk import run_pipeline
 run_pipeline(Path("."))
 ```
 
-Before a full run, configure the data locations and enabled stages in `config/catalog/base.yml` and `config/parameters/base.yml`. The default configuration deliberately skips ingestion, modelling, and evaluation, so a run can reuse existing artifacts or execute only selected stages.
+Before a full run, configure the data locations and enabled stages in `config/catalog/base.yml` and `config/parameters/base.yml`. The current configuration skips ingestion and preprocessing while enabling modelling and same-run evaluation, so it reuses the existing model-input datasets and rebuilds modelling artifacts.
 
 ## Baseline predictors
 
@@ -66,12 +66,12 @@ Configured paths are rooted at `data/` by default.
 | `03_processed/.../model-input.parquet` | One loan per row with origination-time features and target |
 | `04_model_split/*.parquet` | Persisted training, validation, and OOT populations |
 | `05_artifacts/<version>/<algorithm>/` | Model, fitted preprocessor, training metadata, and training configuration |
-| `05_artifacts/model_evaluation/<version>/<algorithm>/<dataset>/` | Evaluation JSON, Excel workbook, and ROC, KS, decile, and calibration charts |
+| `05_artifacts/<version>/<algorithm>/model_evaluation/<dataset>/` | Evaluation JSON, Excel workbook, and ROC, KS, decile, and calibration charts |
 | `06_reporting/data_quality/pipeline_qc.xlsx` | Data-quality workbook |
 
 ## Evaluation
 
-For enabled validation and OOT datasets, the framework produces classification metrics, ROC-AUC, PR-AUC, KS, Brier score, log loss, confusion matrices, risk deciles, calibration tables, and diagnostic charts. The classification threshold, risk deciles, calibration bins, model version, and evaluation mode are all configuration-driven.
+For enabled validation and OOT datasets, the framework produces classification metrics, ROC-AUC, PR-AUC, KS, Brier score, log loss, confusion matrices, risk deciles, calibration tables, and diagnostic charts. The classification threshold, risk deciles, calibration bins, model version, and evaluation mode are all configuration-driven. When evaluating an existing artifact, its saved training feature contract is used for scoring rather than the active feature list.
 
 ## Project documentation
 
@@ -81,4 +81,4 @@ For enabled validation and OOT datasets, the framework produces classification m
 
 ## Current limitations
 
-The current trained algorithm is logistic regression. Model calibration, challenger models, explainability, stability analysis, and production monitoring remain future work. Data and model outputs are local project artifacts and should be independently validated before any credit decisioning use.
+The current trained algorithm is logistic regression. The active configuration uses `class_weight: balanced`; its raw outputs are useful ranking scores but must not be interpreted as calibrated PDs without calibration. Challenger models, explainability, stability analysis, probability calibration, and production monitoring remain future work. Data and model outputs are local project artifacts and should be independently validated before any credit decisioning use.

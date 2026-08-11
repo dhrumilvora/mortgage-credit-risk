@@ -80,3 +80,7 @@ catalog:
     file_name: "pipeline_qc"
     file_type: "xlsx"
 
+  numerical_distribution_report:
+    folder_name: "06_reporting/data_quality"
+    file_name: "distributions"
+    file_type: "pdf"

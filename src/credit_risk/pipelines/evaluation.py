@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from time import perf_counter
 
 import pandas as pd
@@ -10,7 +11,7 @@ from credit_risk.evaluations.evaluations import (
     generate_predictions,
 )
 from credit_risk.evaluations.reporting import save_evaluation_results
-from credit_risk.modelling.artifacts import load_model_artifacts
+from credit_risk.modelling.artifacts import load_model_artifacts, load_training_config
 from credit_risk.modelling.preprocessing import split_features_target
 from credit_risk.utils.config import create_path
 
@@ -20,12 +21,10 @@ logger = logging.getLogger(__name__)
 def evaluate_split(
     model,
     preprocessor,
-    df,
-    config,
+    df: pd.DataFrame,
+    config: dict,
 ) -> dict:
-    """
-    Generate predictions and evaluate a single dataset split.
-    """
+    """Generate predictions and evaluate a single dataset split."""
 
     X, y = split_features_target(
         df,
@@ -53,12 +52,8 @@ def evaluate_split(
 def run_evaluation_pipeline(
     config: dict,
 ) -> None:
-    """
-    Run model evaluation for the configured datasets and
-    persist evaluation artifacts.
-    """
-    model = None
-    preprocessor = None
+    """Run model evaluation for configured datasets and persist results."""
+
     start = perf_counter()
 
     evaluation_config = config["parameters"]["evaluation"]
@@ -69,30 +64,53 @@ def run_evaluation_pipeline(
 
     mode = evaluation_config["mode"]
 
-    if mode == "same_run":
-        model, preprocessor = load_model_artifacts(config)
-    elif mode == "existing_model":
-        config_copy = {**config}
-        config_copy["parameters"]["modelling"]["version"] = config["parameters"][
-            "evaluation"
-        ]["model"]["version"]
+    # --------------------------------------------------------------
+    # Resolve model configuration
+    # --------------------------------------------------------------
 
-        config_copy["parameters"]["modelling"]["algorithm"] = config["parameters"][
-            "evaluation"
-        ]["model"]["type"]
-        model, preprocessor = load_model_artifacts(config_copy)
+    if mode == "same_run":
+        model_config = config
+        scoring_config = config
+
+    elif mode == "existing_model":
+        model_config = deepcopy(config)
+
+        model_config["parameters"]["modelling"]["version"] = evaluation_config["model"][
+            "version"
+        ]
+
+        model_config["parameters"]["modelling"]["algorithm"] = evaluation_config[
+            "model"
+        ]["type"]
+
+        training_config = load_training_config(model_config)
+        scoring_config = deepcopy(config)
+        scoring_config["parameters"]["modelling"]["features"] = training_config[
+            "features"
+        ]
 
     else:
-
         raise ValueError(f"Unsupported evaluation mode: {mode}")
 
+    # --------------------------------------------------------------
+    # Load model artifacts
+    # --------------------------------------------------------------
+
+    model, preprocessor = load_model_artifacts(model_config)
+
     logger.info(
-        "Evaluation model loaded: mode=%s",
+        "Evaluation model loaded: mode=%s version=%s algorithm=%s",
         mode,
+        model_config["parameters"]["modelling"]["version"],
+        model_config["parameters"]["modelling"]["algorithm"],
     )
 
     validation_evaluation = None
     oot_evaluation = None
+
+    # --------------------------------------------------------------
+    # Validation evaluation
+    # --------------------------------------------------------------
 
     if evaluation_config["datasets"]["validation"]:
 
@@ -108,10 +126,14 @@ def run_evaluation_pipeline(
             model=model,
             preprocessor=preprocessor,
             df=validation_df,
-            config=config,
+            config=scoring_config,
         )
 
         logger.info("Validation evaluation completed.")
+
+    # --------------------------------------------------------------
+    # OOT evaluation
+    # --------------------------------------------------------------
 
     if evaluation_config["datasets"]["oot"]:
 
@@ -127,10 +149,14 @@ def run_evaluation_pipeline(
             model=model,
             preprocessor=preprocessor,
             df=oot_df,
-            config=config,
+            config=scoring_config,
         )
 
         logger.info("OOT evaluation completed.")
+
+    # --------------------------------------------------------------
+    # Persist evaluation results
+    # --------------------------------------------------------------
 
     save_evaluation_results(
         validation_evaluation=validation_evaluation,
@@ -139,6 +165,6 @@ def run_evaluation_pipeline(
     )
 
     logger.info(
-        "Evaluation pipeline completed: " "duration_seconds=%.2f",
+        "Evaluation pipeline completed: duration_seconds=%.2f",
         perf_counter() - start,
     )

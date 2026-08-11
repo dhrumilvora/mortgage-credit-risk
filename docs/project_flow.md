@@ -59,7 +59,7 @@ The final `model-input` data therefore contains one row per eligible loan, confi
 | Section | Controls |
 |---|---|
 | `data` | Provider, vintages, ingestion and preprocessing switches, and source feature lists |
-| `feature_engineering` | Configured transformations; the current implementation bins credit score |
+| `feature_engineering` | Configured transformations; the current configuration bins credit score, DTI, LTV, and CLTV and log-transforms original UPB |
 | `target` | Target name, 90+ DPD threshold, horizon, eligibility age, and voluntary-payoff code |
 | `modelling` | Development/OOT vintages, features, split, algorithm, and logistic-regression hyperparameters |
 | `evaluation` | Evaluation mode, model version/type, datasets, threshold, deciles, and calibration bins |
@@ -89,7 +89,7 @@ The configured logistic regression is trained on the transformed training matrix
 
 ## Evaluation artifacts
 
-When evaluation is enabled, the pipeline loads the model artifacts from either the same run or a configured existing model. It evaluates whichever of validation and OOT data are enabled and writes, for each dataset:
+When evaluation is enabled, the pipeline loads the model artifacts from either the same run or a configured existing model. Existing-artifact evaluation loads the persisted training configuration and uses its saved feature contract for scoring. It evaluates whichever of validation and OOT data are enabled and writes, for each dataset:
 
 - `evaluation_results.json`;
 - `evaluation_report.xlsx`;
@@ -106,4 +106,4 @@ from credit_risk import run_pipeline
 run_pipeline(Path("."))
 ```
 
-The default switches are intentionally conservative. Enable only the stages for which the required input datasets or model artifacts exist.
+The current configuration reuses existing input datasets by skipping ingestion and preprocessing, then runs modelling and same-run evaluation. Enable only the stages for which the required input datasets or model artifacts exist.

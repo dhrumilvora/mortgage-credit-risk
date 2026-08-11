@@ -59,6 +59,13 @@ def apply_transformations(
                 feature,
                 transformation_config,
             )
+        elif transformation_config.get("method") == "log":
+            if (result[feature] <= 0).any():
+                raise ValueError(
+                    f"Cannot apply log transformation to '{feature}': "
+                    "feature contains zero or negative values."
+                )
+            result[f"{feature}_log"] = np.log(result[feature])
         else:
             raise ValueError(
                 f"Unsupported transformation method for '{feature}': "

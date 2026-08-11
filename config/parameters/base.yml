@@ -1,66 +1,65 @@
 parameters:
+
+  # ============================================================
+  # PROJECT
+  # ============================================================
+
   project:
     name: mortgage-credit-risk
+
+  # ============================================================
+  # LOGGING
+  # ============================================================
 
   logging:
     enabled: true
     level: INFO
     color: true
 
+  # ============================================================
+  # REPORTING
+  # ============================================================
+
   reporting:
     skip: true
 
+    # Vintage used for standalone reporting / QC analysis.
+    vintage: 2015
+
+  # ============================================================
+  # DATA
+  # ============================================================
+
   data:
     data_provider: freddie_mac
-    all_vintages: [2015,2016,2017,2018,2019,2020,2021,2022]
-    # vintage: 2019
+
+    # Vintages to ingest and preprocess.
+    all_vintages:
+    - 2015
+    - 2016
+    - 2017
+    - 2018
+    - 2019
+    - 2020
+    - 2021
+    - 2022
+
     id_col: "loan_id"
     time: "period"
+
     ingestion:
       skip: true
       chunksize: 2500000
+
     preprocess:
-      skip: false 
+      skip: true
+
+      # --------------------------------------------------------
+      # Baseline numerical features
+      # --------------------------------------------------------
       features:
         numerical_features:
-          - credit_score
-          - original_dti
-          - number_of_borrowers
-          - original_ltv
-          - original_cltv
-          - mi_percentage
-          - original_upb
-          - original_interest_rate
-          - original_loan_term
-        categorical_features:
-          - first_time_homebuyer_flag
-          - property_type
-          - occupancy_status
-          - loan_purpose
-          - channel
-          - super_conforming_flag
-          - harp_indicator
-          - property_state
-  feature_engineering:
-    transformations:
-      credit_score:
-        enabled: true
-        method: bin
-        bins: [0,650,700,750,800,"+inf"]
-        labels: ["<650","650-699","700-749","750-799","800+"]
-  modelling:
-    skip: true
-    version: test_unbalanced
-    vintages_train:
-      - 2015
-      - 2016
-      - 2017
-    vintages_oot:
-      - 2018
-      - 2019
-    features:
-      numerical_features:
-        # - credit_score
+        - credit_score
         - original_dti
         - number_of_borrowers
         - original_ltv
@@ -69,7 +68,10 @@ parameters:
         - original_upb
         - original_interest_rate
         - original_loan_term
-      categorical_features:
+        # ------------------------------------------------------
+        # Baseline categorical features
+        # ------------------------------------------------------
+        categorical_features:
         - first_time_homebuyer_flag
         - property_type
         - occupancy_status
@@ -78,30 +80,290 @@ parameters:
         - super_conforming_flag
         - harp_indicator
         - property_state
-        - credit_score_bins
+
+  # ============================================================
+  # FEATURE ENGINEERING
+  # ============================================================
+
+  feature_engineering:
+
+    transformations:
+
+      # --------------------------------------------------------
+      # Credit score
+      #
+      # Credit score is unlikely to have a strictly linear
+      # relationship with log-odds of delinquency.
+      # Binning allows LR to learn different risk levels
+      # across score ranges.
+      # --------------------------------------------------------
+
+      credit_score:
+        enabled: true
+        method: bin
+
+        bins:
+        - 0
+        - 580
+        - 620
+        - 660
+        - 700
+        - 740
+        - 780
+        - 850
+
+        labels:
+        - "<580"
+        - "580-619"
+        - "620-659"
+        - "660-699"
+        - "700-739"
+        - "740-779"
+        - "780+"
+
+      # --------------------------------------------------------
+      # Original UPB
+      #
+      # UPB is right-skewed. Log transformation can reduce
+      # skewness and allow LR to capture a more proportional
+      # relationship between loan size and risk.
+      # --------------------------------------------------------
+
+      original_upb:
+        enabled: true
+        method: log
+
+      # --------------------------------------------------------
+      # DTI
+      #
+      # DTI has a potentially nonlinear relationship with
+      # delinquency risk. Binning allows different risk levels
+      # across DTI ranges.
+      # --------------------------------------------------------
+
+      original_dti:
+        enabled: true
+        method: bin
+
+        bins:
+        - 0
+        - 20
+        - 30
+        - 40
+        - 50
+        - 60
+        - 100
+        - inf
+
+        labels:
+        - "<20"
+        - "20-29"
+        - "30-39"
+        - "40-49"
+        - "50-59"
+        - "60-99"
+        - "100+"
+
+      # --------------------------------------------------------
+      # LTV
+      #
+      # LTV is expected to have nonlinear risk behavior.
+      # Binning lets LR capture changes in risk around common
+      # leverage ranges.
+      # --------------------------------------------------------
+
+      original_ltv:
+        enabled: true
+        method: bin
+
+        bins:
+        - 0
+        - 60
+        - 70
+        - 75
+        - 80
+        - 85
+        - 90
+        - 95
+        - 100
+        - 150
+        - inf
+
+        labels:
+        - "<60"
+        - "60-69"
+        - "70-74"
+        - "75-79"
+        - "80-84"
+        - "85-89"
+        - "90-94"
+        - "95-99"
+        - "100-149"
+        - "150+"
+
+      # --------------------------------------------------------
+      # CLTV
+      #
+      # CLTV is also expected to have nonlinear risk behavior.
+      # Coarse bins are used because the distribution contains
+      # extreme upper-tail observations.
+      # --------------------------------------------------------
+
+      original_cltv:
+        enabled: true
+        method: bin
+
+        bins:
+        - 0
+        - 60
+        - 70
+        - 75
+        - 80
+        - 85
+        - 90
+        - 95
+        - 100
+        - 120
+        - 150
+        - inf
+
+        labels:
+        - "<60"
+        - "60-69"
+        - "70-74"
+        - "75-79"
+        - "80-84"
+        - "85-89"
+        - "90-94"
+        - "95-99"
+        - "100-119"
+        - "120-149"
+        - "150+"
+
+  # ============================================================
+  # MODELLING
+  # ============================================================
+
+  modelling:
+    skip: false
+
+    version: test_unbalanced
+
+    # ----------------------------------------------------------
+    # Training / OOT vintage split
+    # ----------------------------------------------------------
+
+    vintages_train:
+    - 2015
+    - 2016
+    - 2017
+
+    vintages_oot:
+    - 2018
+    - 2019
+    # ----------------------------------------------------------
+    # Numerical model features
+    #
+    # NOTE:
+    # Original continuous variables are retained where we want
+    # the model to use their continuous relationship.
+    #
+    # For transformed variables, the transformed representation
+    # is added explicitly.
+    # ----------------------------------------------------------
+
+    features:
+
+      numerical_features:
+
+      - number_of_borrowers
+
+      # Continuous LTV/CLTV, credit_score and dti are replaced by their binned
+      # representations below for this challenger.
+      # - original_ltv
+      # - original_cltv
+      # - credit_score
+      # - original_dti
+      - mi_percentage
+      - original_upb
+      - original_interest_rate
+      - original_loan_term
+
+      # Generated by the log transformation of original_upb.
+      - original_upb_log
+      # --------------------------------------------------------
+      # Categorical model features
+      #
+      # Baseline categorical variables + transformed numerical
+      # variables represented as categorical bins.
+      # --------------------------------------------------------
+
+      categorical_features:
+      - first_time_homebuyer_flag
+      - property_type
+      - occupancy_status
+      - loan_purpose
+      - channel
+      - super_conforming_flag
+      - harp_indicator
+      - property_state
+
+      # Transformed / binned numerical features
+      - credit_score_bins
+      - original_ltv_bins
+      - original_cltv_bins
+      - original_dti_bins
+      # --------------------------------------------------------
+      # Engineered features
+      # --------------------------------------------------------
+
       engineered_features:
-        - original_dti_missing
-    validation_size : 0.2
+      - original_dti_missing
+
+    # ----------------------------------------------------------
+    # Validation
+    # ----------------------------------------------------------
+
+    validation_size: 0.2
     random_state: 42
     stratify: true
+
+    # ----------------------------------------------------------
+    # Model algorithm
+    # ----------------------------------------------------------
+
     algorithm: logistic_regression
+
     logistic_regression:
       penalty: l2
       C: 1.0
       solver: lbfgs
       max_iter: 1000
       class_weight: null
+
+  # ============================================================
+  # TARGET
+  # ============================================================
+
   target:
-    name : ever_90dpd_24m
+    name: ever_90dpd_24m
+
     serious_delinquency_threshold: 3
     max_eligible_start_age: 1
     horizon_months: 24
+
     voluntary_payoffs_zbc: "01"
 
+  # ============================================================
+  # EVALUATION
+  # ============================================================
 
   evaluation:
-    skip: true
-    mode: existing_model  # same_run / existing_model same run will take the model from the current pipeline run
+    skip: false
+
+    # existing_model = evaluate an already persisted model
+    # same_run      = evaluate the model produced in this run
+    mode: same_run
 
     model:
       version: test_unbalanced
@@ -111,18 +373,30 @@ parameters:
       validation: true
       oot: true
 
+    # ----------------------------------------------------------
+    # Classification threshold
+    # ----------------------------------------------------------
+
     classification:
       threshold: 0.5
+
+    # ----------------------------------------------------------
+    # Risk decile configuration
+    # ----------------------------------------------------------
 
     risk:
       n_deciles: 10
 
+    # ----------------------------------------------------------
+    # Calibration bins
+    # ----------------------------------------------------------
+
     calibration:
       bins:
-        - [0.00, 0.01]
-        - [0.01, 0.02]
-        - [0.02, 0.05]
-        - [0.05, 0.10]
-        - [0.10, 0.20]
-        - [0.20, 0.50]
-        - [0.50, 1.00]
+      - [ 0.00, 0.01 ]
+      - [ 0.01, 0.02 ]
+      - [ 0.02, 0.05 ]
+      - [ 0.05, 0.10 ]
+      - [ 0.10, 0.20 ]
+      - [ 0.20, 0.50 ]
+      - [ 0.50, 1.00 ]

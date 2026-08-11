@@ -22,7 +22,7 @@ def load_reporting_data(
 
     base_path = catalog["base"]
     provider = parameters["data"]["data_provider"]
-    vintage = parameters["data"]["vintage"]
+    vintage = parameters["reporting"]["vintage"]
 
     origination_path = create_path(
         base_path,
@@ -780,6 +780,7 @@ def build_issue_summary(
 
 
 def build_data_quality_report(
+    data: pd.DataFrame,
     config: dict,
 ) -> dict[str, pd.DataFrame]:
     """
@@ -788,8 +789,6 @@ def build_data_quality_report(
     The reporting layer reads persisted pipeline outputs and does not
     modify any underlying datasets.
     """
-
-    data = load_reporting_data(config)
 
     parameters = config["parameters"]
 

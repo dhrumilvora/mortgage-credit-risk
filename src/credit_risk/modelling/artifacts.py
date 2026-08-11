@@ -1,11 +1,15 @@
 from __future__ import annotations
-from credit_risk.utils.config import create_path
+
+import json
+import logging
 from pathlib import Path
 from time import perf_counter
-import logging
+from typing import Any
+
 import joblib
-import json
 import yaml
+
+from credit_risk.utils.config import create_path
 
 logger = logging.getLogger(__name__)
 
@@ -228,3 +232,21 @@ def load_model_artifacts(
     preprocessor = _load_joblib(preprocessor_path)
 
     return model, preprocessor
+
+
+def load_training_config(config: dict) -> dict:
+    """Load the modelling configuration saved with a trained artifact."""
+
+    modelling = config["parameters"]["modelling"]
+    catalog = config["catalog"]
+
+    training_config_path = create_path(
+        catalog["base"],
+        catalog,
+        "training_config",
+        modelling["version"],
+        modelling["algorithm"],
+        must_exist=True,
+    )
+
+    return _load_yaml(training_config_path)

@@ -4,13 +4,14 @@ import json
 import logging
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from openpyxl import Workbook
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.styles import Alignment, Font
-from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
-import matplotlib.pyplot as plt
+
 from credit_risk.utils.config import create_path
 
 logger = logging.getLogger(__name__)
@@ -61,22 +62,40 @@ def _get_evaluation_dir(
     config: dict,
     dataset_name: str,
 ) -> Path:
+    """Resolve and create the evaluation output directory."""
 
     if dataset_name not in {"validation", "oot"}:
         raise ValueError(f"Unsupported evaluation dataset: {dataset_name}")
 
-    evaluation_config = config["parameters"]["evaluation"]
+    parameters = config["parameters"]
+    evaluation_config = parameters["evaluation"]
+
+    if evaluation_config["mode"] == "same_run":
+        model_version = parameters["modelling"]["version"]
+        model_type = parameters["modelling"]["algorithm"]
+
+    elif evaluation_config["mode"] == "existing_model":
+        model_config = evaluation_config["model"]
+
+        model_version = model_config["version"]
+        model_type = model_config["type"]
+
+    else:
+        raise ValueError(
+            f"Unsupported evaluation mode: " f"{evaluation_config['mode']}"
+        )
 
     evaluation_root = create_path(
         config["catalog"]["base"],
         config["catalog"],
         "model_evaluation",
-        evaluation_config["model"]["version"],
-        evaluation_config["model"]["type"],
+        model_version,
+        model_type,
         must_exist=False,
     )
 
     evaluation_dir = evaluation_root / dataset_name
+
     evaluation_dir.mkdir(
         parents=True,
         exist_ok=True,
@@ -99,15 +118,13 @@ def save_evaluation_json(
     evaluation_path = evaluation_dir / "evaluation_results.json"
 
     serializable_evaluation = _make_json_serializable(evaluation)
-    to_save = (
-        {
-            "ds_metrics": serializable_evaluation["ds_metrics"],
-            "confusion_matrix": serializable_evaluation["confusion_matrix"],
-            "credit_risk_metrics": serializable_evaluation["credit_risk_metrics"],
-            "risk_deciles": serializable_evaluation["risk_deciles"],
-            "calibration": serializable_evaluation["calibration"],
-        },
-    )
+    to_save = {
+        "ds_metrics": serializable_evaluation["ds_metrics"],
+        "confusion_matrix": serializable_evaluation["confusion_matrix"],
+        "credit_risk_metrics": serializable_evaluation["credit_risk_metrics"],
+        "risk_deciles": serializable_evaluation["risk_deciles"],
+        "calibration": serializable_evaluation["calibration"],
+    }
     with open(
         evaluation_path,
         "w",

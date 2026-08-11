@@ -43,13 +43,15 @@ Feature transformations are configuration-driven. The current configuration crea
 
 | Band | Range |
 |---|---|
-| `<650` | 0–649 |
-| `650-699` | 650–699 |
-| `700-749` | 700–749 |
-| `750-799` | 750–799 |
-| `800+` | 800 and above |
+| `<580` | 0–579 |
+| `580-619` | 580–619 |
+| `620-659` | 620–659 |
+| `660-699` | 660–699 |
+| `700-739` | 700–739 |
+| `740-779` | 740–779 |
+| `780+` | 780–<850 |
 
-The baseline modelling configuration uses the binned credit-score feature rather than raw `credit_score`.
+The baseline modelling configuration uses the binned credit-score feature rather than raw `credit_score`. It also creates binned LTV and CLTV representations, retains raw DTI, and adds `original_upb_log` alongside raw original UPB. A DTI binning configuration is available but is not part of the active model feature list.
 
 ## Development and OOT design
 
@@ -71,7 +73,7 @@ The fitted `ColumnTransformer` is saved alongside the trained model and must be 
 
 ## Model training
 
-The implemented baseline algorithm is scikit-learn logistic regression. Its penalty, regularization strength, solver, iteration limit, class weight, and random state are configuration-driven. The pipeline validates non-empty inputs and class availability before fitting.
+The implemented baseline algorithm is scikit-learn logistic regression. Its penalty, regularization strength, solver, iteration limit, class weight, and random state are configuration-driven. The active configuration uses `class_weight: balanced`. The pipeline validates non-empty inputs and class availability before fitting.
 
 Versioned model artifacts include:
 
@@ -80,7 +82,7 @@ Versioned model artifacts include:
 - training metadata (training/validation rows, transformed feature count, and training event rate);
 - persisted modelling configuration.
 
-Class weighting, threshold selection, probability calibration, and challenger models are model-governance decisions to be selected and validated rather than assumed by the target-construction process.
+Class weighting, threshold selection, probability calibration, and challenger models are model-governance decisions to be selected and validated rather than assumed by the target-construction process. In particular, class weighting changes the effective class prevalence seen during fitting: raw probabilities from the active balanced model should be treated as ranking scores, not calibrated PDs, until a calibration step is validated.
 
 ## Evaluation
 
@@ -92,7 +94,7 @@ Evaluation can score the validation population, OOT population, or both. It gene
 - calibration tables using configured probability bins;
 - ROC, KS, risk-decile, and calibration charts.
 
-Results are persisted as JSON, an Excel workbook, and PNG charts. For rare events, ROC-AUC alone is insufficient; PR-AUC, decile concentration, calibration, and threshold-specific outcomes should be reviewed together.
+Results are persisted as JSON, an Excel workbook, and PNG charts. When an existing artifact is evaluated, the saved training feature contract is used to select scoring inputs. For rare events, ROC-AUC alone is insufficient; PR-AUC, decile concentration, calibration, and threshold-specific outcomes should be reviewed together.
 
 ## Limitations and next work
 
