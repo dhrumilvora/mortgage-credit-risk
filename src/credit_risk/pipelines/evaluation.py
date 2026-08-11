@@ -11,6 +11,7 @@ from credit_risk.evaluations.evaluations import (
     generate_predictions,
 )
 from credit_risk.evaluations.reporting import save_evaluation_results
+from credit_risk.evaluations.shap import evaluate_shap
 from credit_risk.modelling.artifacts import load_model_artifacts, load_training_config
 from credit_risk.modelling.preprocessing import split_features_target
 from credit_risk.utils.config import create_path
@@ -128,6 +129,13 @@ def run_evaluation_pipeline(
             df=validation_df,
             config=scoring_config,
         )
+        evaluate_shap(
+            model=model,
+            preprocessor=preprocessor,
+            df=validation_df,
+            config=scoring_config,
+            dataset_name="validation",
+        )
 
         logger.info("Validation evaluation completed.")
 
@@ -151,7 +159,13 @@ def run_evaluation_pipeline(
             df=oot_df,
             config=scoring_config,
         )
-
+        evaluate_shap(
+            model=model,
+            preprocessor=preprocessor,
+            df=oot_df,
+            config=scoring_config,
+            dataset_name="oot",
+        )
         logger.info("OOT evaluation completed.")
 
     # --------------------------------------------------------------

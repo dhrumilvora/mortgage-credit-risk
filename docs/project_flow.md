@@ -38,7 +38,8 @@ flowchart TD
 | Logistic-regression training and artifact persistence | Implemented |
 | Validation and OOT evaluation reporting | Implemented |
 | Calibration of model probabilities | Future work |
-| Challenger models, explainability, and stability analysis | Future work |
+| XGBoost SHAP feature-importance analysis | Implemented |
+| Challenger comparison and stability analysis | Future work |
 
 ## Leakage boundary
 
@@ -96,6 +97,8 @@ When evaluation is enabled, the pipeline loads the model artifacts from either t
 - `roc.png`, `ks.png`, `risk_deciles.png`, and `calibration.png`.
 
 Evaluation includes classification metrics, ROC-AUC, PR-AUC, KS, Brier score, log loss, confusion matrices, deciles, and calibration results.
+
+When `evaluation.shap.enabled` is true, sampled SHAP analysis is also written below `model_evaluation/shap/<dataset>/`. XGBoost uses TreeExplainer on the raw-margin (log-odds) scale; outputs include SHAP values, aligned transformed-feature values, global feature importance, and metadata.
 
 ## Running the pipeline
 

@@ -1,5 +1,8 @@
 import pandas as pd
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def apply_binning(
@@ -73,3 +76,50 @@ def apply_transformations(
             )
 
     return result
+
+
+def build_interaction_features(
+    df: pd.DataFrame,
+    config: dict,
+) -> pd.DataFrame:
+
+    interactions = (
+        config["parameters"].get("feature_engineering", {}).get("interactions", {})
+    )
+
+    if not interactions:
+        return df
+
+    df = df.copy()
+
+    for feature_name, interaction_config in interactions.items():
+
+        if not interaction_config.get("enabled", False):
+            continue
+
+        left = interaction_config["left"]
+        right = interaction_config["right"]
+
+        if left not in df.columns:
+            raise KeyError(
+                f"Interaction '{feature_name}' requires missing " f"feature '{left}'."
+            )
+
+        if right not in df.columns:
+            raise KeyError(
+                f"Interaction '{feature_name}' requires missing " f"feature '{right}'."
+            )
+
+        left_values = pd.to_numeric(df[left], errors="coerce").astype(float)
+        right_values = pd.to_numeric(df[right], errors="coerce").astype(float)
+
+        df[feature_name] = left_values * right_values
+
+        logger.info(
+            "Created interaction feature: %s = %s * %s",
+            feature_name,
+            left,
+            right,
+        )
+
+    return df

@@ -15,6 +15,7 @@ The baseline model estimates the probability that a mortgage reaches 90+ days pa
 - Train-only fitted preprocessing: median imputation for numeric fields, constant imputation plus one-hot encoding for categorical fields.
 - Logistic-regression training, versioned model/preprocessor artifacts, and training metadata.
 - Validation and OOT evaluation with JSON, Excel, and chart outputs.
+- XGBoost SHAP artifacts for sampled validation and OOT populations, including transformed-feature values and global importance.
 
 ## Target and cohort
 
@@ -81,4 +82,4 @@ For enabled validation and OOT datasets, the framework produces classification m
 
 ## Current limitations
 
-The current trained algorithm is logistic regression. The active configuration uses `class_weight: balanced`; its raw outputs are useful ranking scores but must not be interpreted as calibrated PDs without calibration. Challenger models, explainability, stability analysis, probability calibration, and production monitoring remain future work. Data and model outputs are local project artifacts and should be independently validated before any credit decisioning use.
+The current pipeline supports logistic regression and XGBoost. XGBoost SHAP explanations are implemented, while challenger comparison, stability analysis, probability calibration, and production monitoring remain future work. SHAP values for XGBoost are on the model's raw-margin (log-odds) scale. Data and model outputs are local project artifacts and should be independently validated before any credit decisioning use.

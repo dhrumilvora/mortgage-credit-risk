@@ -19,7 +19,10 @@ from credit_risk.target.delinquency import (
     build_24m_serious_delinquency_target,
 )
 from credit_risk.utils.config import create_path
-from credit_risk.features.feature_engineering import apply_transformations
+from credit_risk.features.feature_engineering import (
+    apply_transformations,
+    build_interaction_features,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +193,7 @@ def build_modeling_dataset(config: dict) -> None:
         ).reset_index(drop=True)
 
         modeling = apply_transformations(modeling, config)
+        modeling = build_interaction_features(modeling, config)
         # ------------------------------------------------------------------
         # Resolve output path
         # ------------------------------------------------------------------

@@ -96,6 +96,10 @@ Evaluation can score the validation population, OOT population, or both. It gene
 
 Results are persisted as JSON, an Excel workbook, and PNG charts. When an existing artifact is evaluated, the saved training feature contract is used to select scoring inputs. For rare events, ROC-AUC alone is insufficient; PR-AUC, decile concentration, calibration, and threshold-specific outcomes should be reviewed together.
 
+## SHAP explainability
+
+When enabled, SHAP analysis samples the configured number of validation and OOT rows after the fitted preprocessor. XGBoost uses TreeExplainer with tree-path-dependent perturbation because this supports its categorical splits efficiently. Its SHAP values are exact contributions on the raw-margin (log-odds) scale, rather than calibrated-PD changes. Artifacts preserve the SHAP values, corresponding transformed feature values, feature-importance summary, and metadata.
+
 ## Limitations and next work
 
 The baseline is an origination-time, binary 24-month model. Future work includes probability calibration, challenger algorithms, coefficient/feature explainability, stability monitoring across vintages and segments, and point-in-time loan-month models with strictly lagged behavioural variables. Any deployment should include independent validation, fair-lending review, monitoring, and controls appropriate to the intended use.

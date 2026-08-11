@@ -15,6 +15,12 @@ dependencies = [
     "pandas>=2.2",
     "pyarrow>=17.0",
     "PyYAML>=6.0",
+    "scikit-learn>=1.5",
+    "xgboost>=2.0",
+    "shap>=0.46",
+    "joblib>=1.4",
+    "openpyxl>=3.1",
+    "matplotlib>=3.9",
 ]
 
 
