@@ -10,7 +10,7 @@ from credit_risk.modelling.preprocessing import (
     split_features_target,
     build_preprocessor,
 )
-from credit_risk.modelling.model import train_logistic_regression
+from credit_risk.modelling.model import train_model
 from credit_risk.modelling.artifacts import save_artifacts
 
 logger = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ def run_modelling_pipeline(config: dict) -> None:
         X_validation.shape,
         y_validation.shape,
     )
-    model = train_logistic_regression(X_train_transformed, y_train, config)
+    model = train_model(X_train_transformed, y_train, config)
     save_artifacts(
         model,
         preprocessor,

@@ -22,7 +22,10 @@ def generate_predictions(
 ) -> tuple[np.ndarray, np.ndarray]:
     if X.shape[0] == 0:
         raise ValueError("Prediction feature matrix is empty.")
-
+    if not 0 <= threshold <= 1:
+        raise ValueError(
+            f"Prediction threshold must be between 0 and 1, got {threshold}."
+        )
     X_transformed = preprocessor.transform(X)
 
     y_proba = np.asarray(model.predict_proba(X_transformed)[:, 1])
