@@ -6,7 +6,7 @@ parameters:
 
   project:
     name: mortgage-credit-risk
-
+  modelling_approach: "origination" # origination / 
   # ============================================================
   # LOGGING
   # ============================================================
@@ -21,7 +21,7 @@ parameters:
   # ============================================================
 
   reporting:
-    skip: true
+    skip: fa;se
 
     # Vintage used for standalone reporting / QC analysis.
     vintage: 2015

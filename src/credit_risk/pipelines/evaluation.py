@@ -56,7 +56,7 @@ def run_evaluation_pipeline(
     """Run model evaluation for configured datasets and persist results."""
 
     start = perf_counter()
-
+    approach = config["parameters"]["modelling_approach"]
     evaluation_config = config["parameters"]["evaluation"]
 
     if evaluation_config["skip"]:
@@ -116,9 +116,7 @@ def run_evaluation_pipeline(
     if evaluation_config["datasets"]["validation"]:
 
         validation_path = create_path(
-            config["catalog"]["base"],
-            config["catalog"],
-            "validation_df",
+            config["catalog"]["base"], config["catalog"], "validation_df", approach
         )
 
         validation_df = pd.read_parquet(validation_path)
@@ -146,9 +144,7 @@ def run_evaluation_pipeline(
     if evaluation_config["datasets"]["oot"]:
 
         oot_path = create_path(
-            config["catalog"]["base"],
-            config["catalog"],
-            "oot_df",
+            config["catalog"]["base"], config["catalog"], "oot_df", approach
         )
 
         oot_df = pd.read_parquet(oot_path)

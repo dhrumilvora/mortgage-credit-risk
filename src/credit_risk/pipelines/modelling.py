@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def run_modelling_pipeline(config: dict) -> None:
-
+    approach = config["parameters"]["modelling_approach"]
     modelling_config = config["parameters"]["modelling"]
     if modelling_config["skip"]:
         logger.info("Modelling pipeline skipped by configuration")
@@ -39,13 +39,25 @@ def run_modelling_pipeline(config: dict) -> None:
     oot_df = load_modelling_vintage(config, oot_vintages)
     train_df, test_df = stratified_data_split(development_df, config)
     train_path = create_path(
-        config["catalog"]["base"], config["catalog"], "train_df", must_exist=False
+        config["catalog"]["base"],
+        config["catalog"],
+        "train_df",
+        approach,
+        must_exist=False,
     )
     test_path = create_path(
-        config["catalog"]["base"], config["catalog"], "validation_df", must_exist=False
+        config["catalog"]["base"],
+        config["catalog"],
+        "validation_df",
+        approach,
+        must_exist=False,
     )
     oot_path = create_path(
-        config["catalog"]["base"], config["catalog"], "oot_df", must_exist=False
+        config["catalog"]["base"],
+        config["catalog"],
+        "oot_df",
+        approach,
+        must_exist=False,
     )
 
     write_parquet(train_df, train_path)

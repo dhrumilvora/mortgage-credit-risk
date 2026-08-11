@@ -27,7 +27,10 @@ from credit_risk.features.feature_engineering import (
 logger = logging.getLogger(__name__)
 
 
-def build_origination(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+def build_origination(
+    df: pd.DataFrame,
+    config: dict,
+) -> pd.DataFrame:
     """Apply finalized origination preprocessing."""
 
     validate_baseline_features(df.columns, config)
@@ -39,7 +42,9 @@ def build_origination(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     return result
 
 
-def build_performance(df: pd.DataFrame) -> pd.DataFrame:
+def build_performance(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
     """Apply finalized performance preprocessing."""
 
     validate_features(df.columns)
@@ -67,7 +72,9 @@ def build_master_dataset(
     )
 
 
-def build_modeling_dataset(config: dict) -> None:
+def build_modeling_dataset_origination(
+    config: dict,
+) -> None:
     """
     Build and persist the final loan-level modelling dataset.
 
@@ -77,14 +84,18 @@ def build_modeling_dataset(config: dict) -> None:
     """
 
     data_config = config["parameters"]["data"]
+    approach = config["parameters"]["modelling_approach"]
+
     if config["parameters"]["data"]["preprocess"]["skip"]:
         logger.info("Preprocessing skipped by configuration")
         return
 
     start = perf_counter()
+
     for vintage in config["parameters"]["data"]["all_vintages"]:
 
         provider = data_config["data_provider"]
+
         logger.info(
             "Dataset construction started: provider=%s vintage=%s",
             provider,
@@ -115,14 +126,22 @@ def build_modeling_dataset(config: dict) -> None:
         # Read canonical datasets
         # ------------------------------------------------------------------
 
-        logger.info("Reading canonical origination data: %s", origination_path)
+        logger.info(
+            "Reading canonical origination data: %s",
+            origination_path,
+        )
+
         origination_df = pd.read_parquet(origination_path)
 
-        logger.info("Reading canonical performance data: %s", performance_path)
+        logger.info(
+            "Reading canonical performance data: %s",
+            performance_path,
+        )
+
         performance_df = pd.read_parquet(performance_path)
 
         logger.info(
-            "Canonical datasets loaded: origination_rows=%s performance_rows=%s",
+            "Canonical datasets loaded: origination_rows=%s " "performance_rows=%s",
             f"{len(origination_df):,}",
             f"{len(performance_df):,}",
         )
@@ -131,7 +150,10 @@ def build_modeling_dataset(config: dict) -> None:
         # Preprocess each canonical dataset exactly once
         # ------------------------------------------------------------------
 
-        origination_features = build_origination(origination_df, config)
+        origination_features = build_origination(
+            origination_df,
+            config,
+        )
 
         performance_features = build_performance(
             performance_df,
@@ -155,6 +177,7 @@ def build_modeling_dataset(config: dict) -> None:
             origination_features,
             performance_features,
         )
+
         logger.info(
             "Master loan-month dataset constructed: rows=%s columns=%s",
             f"{len(master):,}",
@@ -192,8 +215,16 @@ def build_modeling_dataset(config: dict) -> None:
             validate="one_to_one",
         ).reset_index(drop=True)
 
-        modeling = apply_transformations(modeling, config)
-        modeling = build_interaction_features(modeling, config)
+        modeling = apply_transformations(
+            modeling,
+            config,
+        )
+
+        modeling = build_interaction_features(
+            modeling,
+            config,
+        )
+
         # ------------------------------------------------------------------
         # Resolve output path
         # ------------------------------------------------------------------
@@ -202,6 +233,7 @@ def build_modeling_dataset(config: dict) -> None:
             config["catalog"]["base"],
             config["catalog"],
             "model_input_path",
+            approach,
             provider,
             vintage,
             must_exist=False,
@@ -227,4 +259,39 @@ def build_modeling_dataset(config: dict) -> None:
             f"{int(modeling['ever_90dpd_24m'].sum()):,}",
             model_input_path,
             perf_counter() - start,
+        )
+
+
+def build_modeling_dataset_behavioral(
+    config: dict,
+) -> None:
+    """
+    Build and persist the point-in-time behavioural modelling dataset.
+
+    This will eventually construct the loan-period modelling population,
+    including performance-derived features and a future-window target.
+    """
+
+    raise NotImplementedError("Behavioral modelling approach is not implemented yet.")
+
+
+def build_modeling_dataset(
+    config: dict,
+) -> None:
+    """
+    Build the modelling dataset for the configured modelling approach.
+    """
+
+    approach = config["parameters"]["modelling_approach"]
+
+    if approach == "origination":
+        build_modeling_dataset_origination(config)
+
+    elif approach == "behavioral":
+        build_modeling_dataset_behavioral(config)
+
+    else:
+        raise ValueError(
+            f"Unsupported modelling approach: {approach}. "
+            "Expected 'origination' or 'behavioral'."
         )

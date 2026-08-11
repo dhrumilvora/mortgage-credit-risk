@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 def load_modelling_vintage(config: dict, vintages: list[int]) -> pd.DataFrame:
+    approach = config["parameters"]["modelling_approach"]
     if not vintages:
         raise ValueError("At least one modelling vintage must be provided.")
     data_config = config["parameters"]["data"]
@@ -17,6 +18,7 @@ def load_modelling_vintage(config: dict, vintages: list[int]) -> pd.DataFrame:
             config["catalog"]["base"],
             config["catalog"],
             "model_input_path",
+            approach,
             provider,
             vintage,
         )

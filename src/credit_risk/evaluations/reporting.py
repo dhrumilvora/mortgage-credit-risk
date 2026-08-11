@@ -63,7 +63,7 @@ def _get_evaluation_dir(
     dataset_name: str,
 ) -> Path:
     """Resolve and create the evaluation output directory."""
-
+    approach = config["parameters"]["modelling_approach"]
     if dataset_name not in {"validation", "oot"}:
         raise ValueError(f"Unsupported evaluation dataset: {dataset_name}")
 
@@ -89,6 +89,7 @@ def _get_evaluation_dir(
         config["catalog"]["base"],
         config["catalog"],
         "model_evaluation",
+        approach,
         model_version,
         model_type,
         must_exist=False,

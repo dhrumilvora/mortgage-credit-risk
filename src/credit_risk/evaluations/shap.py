@@ -31,7 +31,9 @@ def _get_shap_config(config: dict) -> dict:
         "random_state": 42,
     }
     parameters = config["parameters"]
-    return parameters.get("evaluation", {}).get("shap", parameters.get("shap", defaults))
+    return parameters.get("evaluation", {}).get(
+        "shap", parameters.get("shap", defaults)
+    )
 
 
 def _load_shap() -> ModuleType:
@@ -339,7 +341,7 @@ def _get_shap_dir(
     dataset_name: str,
 ) -> Path:
     """Resolve the SHAP artifact directory."""
-
+    approach = config["parameters"]["modelling_approach"]
     if dataset_name not in {"validation", "oot"}:
         raise ValueError(f"Unsupported SHAP dataset: {dataset_name}")
 
@@ -361,6 +363,7 @@ def _get_shap_dir(
         "model_evaluation",
         model_version,
         model_type,
+        approach,
         must_exist=False,
     )
 

@@ -1,16 +1,16 @@
 catalog:
   base: "data"
-## Raw Files
+  ## Raw Files
   raw_origination:
     folder_name: "01_raw"
     file_name: "sample_orig"
-    file_type: "txt" 
+    file_type: "txt"
   raw_performance:
     folder_name: "01_raw"
     file_name: "sample_perf"
     file_type: "txt"
 
-## Intermediate Origination & Performance Files
+  ## Intermediate Origination & Performance Files
   origination_path:
     folder_name: "02_intermediate"
     file_name: "origination"
@@ -20,14 +20,14 @@ catalog:
     file_name: "performance"
     file_type: "folder"
 
-### Processed Model Input File
+  ### Processed Model Input File
 
   model_input_path:
     folder_name: "03_processed"
     file_name: "model-input"
     file_type: "parquet"
 
-### Split Files
+  ### Split Files
 
   train_df:
     folder_name: "04_model_split"
@@ -41,39 +41,38 @@ catalog:
     folder_name: "04_model_split"
     file_name: "oot_split"
     file_type: "parquet"
-### Model Artifacts
+  ### Model Artifacts
   model:
-      folder_name: 05_artifacts
-      file_name: model
-      file_type: joblib
+    folder_name: 05_artifacts
+    file_name: model
+    file_type: joblib
 
   preprocessor:
-      folder_name: 05_artifacts
-      file_name: preprocessor
-      file_type: joblib
+    folder_name: 05_artifacts
+    file_name: preprocessor
+    file_type: joblib
 
   training_metadata:
-      folder_name: 05_artifacts
-      file_name: training_metadata
-      file_type: json
+    folder_name: 05_artifacts
+    file_name: training_metadata
+    file_type: json
 
   training_config:
-      folder_name: 05_artifacts
-      file_name: training_config
-      file_type: yaml
+    folder_name: 05_artifacts
+    file_name: training_config
+    file_type: yaml
 
   experiment_metadata:
-      folder_name: 05_artifacts
-      file_name: experiment
-      file_type: json
+    folder_name: 05_artifacts
+    file_name: experiment
+    file_type: json
 
   model_evaluation:
     folder_name: "05_artifacts"
     file_name: "model_evaluation"
     file_type: "folder"
 
-
-### Model Input QC  
+  ### Model Input QC  
 
   pipeline_qc:
     folder_name: "06_reporting/data_quality"

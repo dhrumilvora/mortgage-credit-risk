@@ -19,6 +19,7 @@ def ingest(config: dict) -> None:
 
     start = perf_counter()
     data_config = config["parameters"]["data"]
+
     provider = data_config["data_provider"]
     for vintage in data_config["all_vintages"]:
 

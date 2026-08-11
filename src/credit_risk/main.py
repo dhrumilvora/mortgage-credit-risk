@@ -30,7 +30,8 @@ def run_pipeline(project_path: str | Path) -> None:
     4. Merge into the master loan-month dataset.
     5. Construct the 24-month serious-delinquency target.
     6. Build the final loan-level modelling dataset.
-
+    7. Train Model based on Config.
+    8. Evaluate The model Performance
     Parameters
     ----------
     project_path:

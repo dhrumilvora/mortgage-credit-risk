@@ -120,6 +120,7 @@ def _load_yaml(
 
 
 def save_artifacts(model, preprocessor, training_metadata, config: dict) -> None:
+    approach = config["parameters"]["modelling_approach"]
     start = perf_counter()
     modelling = config["parameters"]["modelling"]
     version = modelling["version"]
@@ -128,13 +129,14 @@ def save_artifacts(model, preprocessor, training_metadata, config: dict) -> None
     base_path = catalog["base"]
 
     model_path = create_path(
-        base_path, catalog, "model", version, model_type, must_exist=False
+        base_path, catalog, "model", approach, version, model_type, must_exist=False
     )
 
     preprocessor_path = create_path(
         base_path,
         catalog,
         "preprocessor",
+        approach,
         version,
         model_type,
         must_exist=False,
@@ -144,6 +146,7 @@ def save_artifacts(model, preprocessor, training_metadata, config: dict) -> None
         base_path,
         catalog,
         "training_metadata",
+        approach,
         version,
         model_type,
         must_exist=False,
@@ -153,6 +156,7 @@ def save_artifacts(model, preprocessor, training_metadata, config: dict) -> None
         base_path,
         catalog,
         "training_config",
+        approach,
         version,
         model_type,
         must_exist=False,
@@ -201,7 +205,7 @@ def load_model_artifacts(
     tuple
         Trained model and fitted preprocessor.
     """
-
+    approach = config["parameters"]["modelling_approach"]
     modelling = config["parameters"]["modelling"]
 
     version = modelling["version"]
@@ -214,6 +218,7 @@ def load_model_artifacts(
         base_path,
         catalog,
         "model",
+        approach,
         version,
         model_type,
         must_exist=True,
@@ -223,6 +228,7 @@ def load_model_artifacts(
         base_path,
         catalog,
         "preprocessor",
+        approach,
         version,
         model_type,
         must_exist=True,
@@ -236,7 +242,7 @@ def load_model_artifacts(
 
 def load_training_config(config: dict) -> dict:
     """Load the modelling configuration saved with a trained artifact."""
-
+    approach = config["parameters"]["modelling_approach"]
     modelling = config["parameters"]["modelling"]
     catalog = config["catalog"]
 
@@ -244,6 +250,7 @@ def load_training_config(config: dict) -> dict:
         catalog["base"],
         catalog,
         "training_config",
+        approach,
         modelling["version"],
         modelling["algorithm"],
         must_exist=True,
