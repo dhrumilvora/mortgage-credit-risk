@@ -12,6 +12,7 @@ from credit_risk.evaluations.risks import (
     calculate_calibration_metrics,
     calculate_credit_risk_metrics,
     calculate_risk_deciles,
+    calculate_calibration_summary,
 )
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,8 @@ def evaluate_dataset(
         bins=calibration_bins,
     )
 
+    calibration_summary = calculate_calibration_summary(y_true=y_true, y_proba=y_proba)
+
     roc_curve_data = calculate_roc_curve_data(
         y_true=y_true,
         y_proba=y_proba,
@@ -140,6 +143,7 @@ def evaluate_dataset(
         "credit_risk_metrics": credit_risk_metrics,
         "risk_deciles": risk_deciles,
         "calibration": calibration,
+        "calibration_summary": calibration_summary,
         "roc_curve": roc_curve_data,
         "ks_curve": ks_curve_data,
     }

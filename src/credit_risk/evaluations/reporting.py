@@ -125,6 +125,7 @@ def save_evaluation_json(
         "credit_risk_metrics": serializable_evaluation["credit_risk_metrics"],
         "risk_deciles": serializable_evaluation["risk_deciles"],
         "calibration": serializable_evaluation["calibration"],
+        "calibration_summary": serializable_evaluation["calibration_summary"],
     }
     with open(
         evaluation_path,
@@ -142,6 +143,27 @@ def save_evaluation_json(
         dataset_name,
         evaluation_path,
     )
+
+
+def _write_calibration_summary_sheet(
+    workbook,
+    calibration_summary,
+) -> None:
+
+    ws = workbook.create_sheet("Calibration Summary")
+
+    if not calibration_summary:
+        ws["A1"] = "No calibration summary available."
+        return
+
+    ws.append(["Metric", "Value"])
+
+    for key, value in calibration_summary.items():
+        ws.append([key, value])
+
+    ws["A1"].font = Font(bold=True)
+
+    _format_sheet(ws)
 
 
 def save_evaluation_excel(
@@ -192,7 +214,10 @@ def save_evaluation_excel(
         workbook,
         evaluation.get("calibration"),
     )
-
+    _write_calibration_summary_sheet(
+        workbook,
+        evaluation.get("calibration_summary"),
+    )
     _write_confusion_matrix_sheet(
         workbook,
         evaluation.get("confusion_matrix"),

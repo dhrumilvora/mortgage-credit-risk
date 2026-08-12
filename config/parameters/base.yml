@@ -6,11 +6,14 @@ parameters:
 
   project:
     name: mortgage-credit-risk
-  modelling_approach: "origination" # origination / 
+  modelling_approach: "origination" # origination / behavioral
   # ============================================================
   # LOGGING
   # ============================================================
-
+  behavioral:
+    observation_ages: [ 6, 12 ]
+    prediction_horizon_months: 12
+    serious_delinquency_threshold: 3
   logging:
     enabled: true
     level: INFO
@@ -294,9 +297,9 @@ parameters:
     - 2015
     - 2016
     - 2017
-
-    vintages_oot:
     - 2018
+    vintages_oot:
+
     - 2019
     # ----------------------------------------------------------
     # Numerical model features

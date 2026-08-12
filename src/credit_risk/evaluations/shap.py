@@ -361,9 +361,9 @@ def _get_shap_dir(
         config["catalog"]["base"],
         config["catalog"],
         "model_evaluation",
+        approach,
         model_version,
         model_type,
-        approach,
         must_exist=False,
     )
 

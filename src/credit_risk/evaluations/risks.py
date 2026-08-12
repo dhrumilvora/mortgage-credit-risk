@@ -202,3 +202,78 @@ def calculate_calibration_metrics(
     )
 
     return calibration_metrics
+
+
+def calculate_calibration_summary(
+    y_true,
+    y_proba,
+) -> dict:
+    """
+    Calculate global calibration intercept and slope.
+
+    The calibration model is:
+
+        logit(P(Y=1)) = intercept + slope * logit(predicted_probability)
+
+    Ideal values:
+        intercept = 0
+        slope = 1
+    """
+    y_true = np.asarray(y_true)
+    y_proba = np.asarray(y_proba)
+
+    if y_true.shape[0] == 0:
+        raise ValueError("Evaluation target is empty.")
+
+    if y_true.shape[0] != y_proba.shape[0]:
+        raise ValueError(
+            "Evaluation target and predicted probabilities contain "
+            "different numbers of rows."
+        )
+
+    if np.unique(y_true).size < 2:
+        raise ValueError(
+            "Calibration assessment requires both positive and negative observations."
+        )
+
+    if not np.isfinite(y_proba).all():
+        raise ValueError("Predicted probabilities contain non-finite values.")
+
+    if ((y_proba < 0) | (y_proba > 1)).any():
+        raise ValueError("Predicted probabilities must be between 0 and 1.")
+
+    # Avoid infinite logits for probabilities exactly equal to 0 or 1.
+    clipped_proba = np.clip(
+        y_proba,
+        1e-15,
+        1 - 1e-15,
+    )
+
+    logit_proba = np.log(clipped_proba / (1 - clipped_proba)).reshape(-1, 1)
+
+    from sklearn.linear_model import LogisticRegression
+
+    calibration_model = LogisticRegression(
+        penalty=None,
+        solver="lbfgs",
+        max_iter=1000,
+    )
+
+    calibration_model.fit(
+        logit_proba,
+        y_true,
+    )
+
+    intercept = float(calibration_model.intercept_[0])
+    slope = float(calibration_model.coef_[0, 0])
+
+    logger.info(
+        "Calibration summary calculated: intercept=%.6f slope=%.6f",
+        intercept,
+        slope,
+    )
+
+    return {
+        "calibration_intercept": intercept,
+        "calibration_slope": slope,
+    }
