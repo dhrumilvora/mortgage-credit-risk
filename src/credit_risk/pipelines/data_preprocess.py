@@ -8,7 +8,7 @@ from time import perf_counter
 import pandas as pd
 
 from credit_risk.data.writers import write_parquet
-from credit_risk.features import origination, performance
+from credit_risk.features import origination, performance, behavioral
 from credit_risk.features.eligibility_origination import (
     validate_baseline_features,
 )
@@ -22,6 +22,9 @@ from credit_risk.utils.config import create_path
 from credit_risk.features.feature_engineering import (
     apply_transformations,
     build_interaction_features,
+)
+from credit_risk.target.behavioral import (
+    build_behavioral_target,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,7 +75,7 @@ def build_master_dataset(
     )
 
 
-def build_modeling_dataset_origination(
+def build_modelling_dataset_origination(
     config: dict,
 ) -> None:
     """
@@ -208,20 +211,20 @@ def build_modeling_dataset_origination(
         # the origination-time model.
         # ------------------------------------------------------------------
 
-        modeling = origination_features.merge(
+        modelling = origination_features.merge(
             target,
             on="loan_id",
             how="inner",
             validate="one_to_one",
         ).reset_index(drop=True)
 
-        modeling = apply_transformations(
-            modeling,
+        modelling = apply_transformations(
+            modelling,
             config,
         )
 
-        modeling = build_interaction_features(
-            modeling,
+        modelling = build_interaction_features(
+            modelling,
             config,
         )
 
@@ -244,7 +247,7 @@ def build_modeling_dataset_origination(
         # ------------------------------------------------------------------
 
         write_parquet(
-            modeling,
+            modelling,
             model_input_path,
         )
 
@@ -254,28 +257,375 @@ def build_modeling_dataset_origination(
             "path=%s duration_seconds=%.2f",
             provider,
             vintage,
-            f"{len(modeling):,}",
-            modeling.shape[1],
-            f"{int(modeling['ever_90dpd_24m'].sum()):,}",
+            f"{len(modelling):,}",
+            modelling.shape[1],
+            f"{int(modelling['ever_90dpd_24m'].sum()):,}",
             model_input_path,
             perf_counter() - start,
         )
 
 
-def build_modeling_dataset_behavioral(
+def build_modelling_dataset_behavioral(
     config: dict,
 ) -> None:
     """
     Build and persist the point-in-time behavioural modelling dataset.
 
-    This will eventually construct the loan-period modelling population,
-    including performance-derived features and a future-window target.
+    The behavioural modelling dataset is constructed at:
+
+        loan_id x observation_age
+
+    The dataset combines:
+    - point-in-time behavioural features;
+    - a forward-looking behavioural target.
+
+    Future information is used only by the target construction and is
+    not included in the point-in-time feature population.
     """
 
-    raise NotImplementedError("Behavioral modelling approach is not implemented yet.")
+    data_config = config["parameters"]["data"]
+    approach = config["parameters"]["modelling_approach"]
+
+    if data_config["preprocess"]["skip"]:
+        logger.info(
+            "Preprocess skipped by configuration",
+        )
+        return
+
+    start = perf_counter()
+
+    for vintage in data_config["all_vintages"]:
+
+        provider = data_config["data_provider"]
+
+        logger.info(
+            "Behavioral dataset construction started: " "provider=%s vintage=%s",
+            provider,
+            vintage,
+        )
+
+        # ------------------------------------------------------------------
+        # Resolve canonical paths
+        # ------------------------------------------------------------------
+
+        origination_path = create_path(
+            config["catalog"]["base"],
+            config["catalog"],
+            "origination_path",
+            provider,
+            vintage,
+        )
+
+        performance_path = create_path(
+            config["catalog"]["base"],
+            config["catalog"],
+            "performance_path",
+            provider,
+            vintage,
+        )
+
+        # ------------------------------------------------------------------
+        # Read canonical datasets
+        # ------------------------------------------------------------------
+
+        logger.info(
+            "Reading canonical origination data: %s",
+            origination_path,
+        )
+
+        origination_df = pd.read_parquet(
+            origination_path,
+        )
+
+        logger.info(
+            "Reading canonical performance data: %s",
+            performance_path,
+        )
+
+        performance_df = pd.read_parquet(
+            performance_path,
+        )
+
+        logger.info(
+            "Canonical datasets loaded: " "origination_rows=%s performance_rows=%s",
+            f"{len(origination_df):,}",
+            f"{len(performance_df):,}",
+        )
+
+        # ------------------------------------------------------------------
+        # Apply existing preprocessing contracts
+        #
+        # Reuse the existing V1 preprocessing for the common origination
+        # and performance fields.
+        # ------------------------------------------------------------------
+
+        origination_features = build_origination(
+            origination_df,
+            config,
+        )
+
+        # first_payment_date is required only for the V2 lifecycle clock.
+        # Keep this field V2-specific rather than changing the V1 feature
+        # contract.
+        origination_dates = origination_df[
+            [
+                "loan_id",
+                "first_payment_date",
+            ]
+        ].drop_duplicates(
+            subset=["loan_id"],
+        )
+
+        origination_features = origination_features.merge(
+            origination_dates,
+            on="loan_id",
+            how="left",
+            validate="one_to_one",
+        )
+
+        performance_features = build_performance(
+            performance_df,
+        )
+
+        logger.info(
+            "Feature preprocessing completed: "
+            "origination_columns=%s performance_columns=%s",
+            origination_features.shape[1],
+            performance_features.shape[1],
+        )
+
+        # ------------------------------------------------------------------
+        # Build master loan-month dataset
+        # ------------------------------------------------------------------
+
+        master = build_master_dataset(
+            origination_features,
+            performance_features,
+        )
+
+        # ------------------------------------------------------------------
+        # Build a consistent V2 lifecycle clock.
+        #
+        # calculated_loan_age is derived from:
+        #
+        #     period
+        #     first_payment_date
+        #
+        # and is used by both behavioral features and behavioral target
+        # construction.
+        # ------------------------------------------------------------------
+
+        master = behavioral.add_calculated_loan_age(
+            master,
+        )
+
+        logger.info(
+            "Master loan-month dataset constructed: " "rows=%s columns=%s",
+            f"{len(master):,}",
+            master.shape[1],
+        )
+
+        # ------------------------------------------------------------------
+        # Build point-in-time behavioural features
+        #
+        # Features are restricted to information available at the
+        # observation age.
+        # ------------------------------------------------------------------
+
+        behavioral_features = behavioral.build_behavioral_features(
+            master,
+            config,
+        )
+
+        if behavioral_features.empty:
+            logger.warning(
+                "No behavioral feature population generated: " "provider=%s vintage=%s",
+                provider,
+                vintage,
+            )
+            continue
+
+        logger.info(
+            "Behavioral feature population constructed: "
+            "rows=%s columns=%s unique_loans=%s observation_ages=%s",
+            f"{len(behavioral_features):,}",
+            behavioral_features.shape[1],
+            f"{behavioral_features['loan_id'].nunique():,}",
+            sorted(behavioral_features["observation_age"].unique().tolist()),
+        )
+
+        # ------------------------------------------------------------------
+        # Build forward-looking behavioural target
+        #
+        # IMPORTANT:
+        # The target builder uses future performance, but that information
+        # is only used to construct the target and is never part of the
+        # point-in-time feature population.
+        # ------------------------------------------------------------------
+
+        target = build_behavioral_target(
+            master,
+            config,
+        )
+
+        if target.empty:
+            logger.warning(
+                "No behavioral target generated: " "provider=%s vintage=%s",
+                provider,
+                vintage,
+            )
+            continue
+
+        logger.info(
+            "Behavioral target constructed: " "rows=%s events=%s",
+            f"{len(target):,}",
+            f"{int(target['future_90dpd_12m'].sum()):,}",
+        )
+
+        # ------------------------------------------------------------------
+        # Validate target grain before joining
+        # ------------------------------------------------------------------
+
+        target_duplicate_mask = target.duplicated(
+            subset=[
+                "loan_id",
+                "observation_age",
+            ],
+            keep=False,
+        )
+
+        if target_duplicate_mask.any():
+            duplicate_count = int(
+                target_duplicate_mask.sum(),
+            )
+
+            raise ValueError(
+                "Behavioral target contains duplicate "
+                "loan_id x observation_age rows: "
+                f"{duplicate_count:,}",
+            )
+
+        # ------------------------------------------------------------------
+        # Join point-in-time features to forward-looking target
+        #
+        # One feature row should map to at most one target row.
+        # Only target-eligible observations are retained.
+        # ------------------------------------------------------------------
+
+        modelling = behavioral_features.merge(
+            target,
+            on=[
+                "loan_id",
+                "observation_age",
+            ],
+            how="inner",
+            validate="one_to_one",
+        ).reset_index(
+            drop=True,
+        )
+
+        if modelling.empty:
+            logger.warning(
+                "Behavioral modelling dataset is empty after "
+                "feature-target merge: provider=%s vintage=%s",
+                provider,
+                vintage,
+            )
+            continue
+
+        # ------------------------------------------------------------------
+        # Validate final modelling grain
+        # ------------------------------------------------------------------
+
+        modelling_duplicate_mask = modelling.duplicated(
+            subset=[
+                "loan_id",
+                "observation_age",
+            ],
+            keep=False,
+        )
+
+        if modelling_duplicate_mask.any():
+            duplicate_count = int(
+                modelling_duplicate_mask.sum(),
+            )
+
+            raise ValueError(
+                "Behavioral modelling dataset contains duplicate "
+                "loan_id x observation_age rows: "
+                f"{duplicate_count:,}",
+            )
+
+        # ------------------------------------------------------------------
+        # Validate that the feature snapshot and observation age agree
+        # with the calculated lifecycle clock.
+        # ------------------------------------------------------------------
+
+        if not (modelling["calculated_loan_age"] == modelling["observation_age"]).all():
+            raise ValueError(
+                "Behavioral modelling dataset contains rows where "
+                "calculated_loan_age != observation_age.",
+            )
+
+        # ------------------------------------------------------------------
+        # Log final target statistics
+        # ------------------------------------------------------------------
+
+        logger.info(
+            "Behavioral modelling dataset constructed: "
+            "rows=%s events=%s event_rate=%.6f",
+            f"{len(modelling):,}",
+            f"{int(modelling['future_90dpd_12m'].sum()):,}",
+            modelling["future_90dpd_12m"].mean(),
+        )
+
+        # ------------------------------------------------------------------
+        # Resolve behavioral output path
+        # ------------------------------------------------------------------
+
+        model_input_path = create_path(
+            config["catalog"]["base"],
+            config["catalog"],
+            "model_input_path",
+            approach,
+            provider,
+            vintage,
+            must_exist=False,
+        )
+
+        # ------------------------------------------------------------------
+        # Persist final V2 landmark modelling dataset
+        # ------------------------------------------------------------------
+
+        print(
+            modelling["current_loan_delinquency_status"]
+            .value_counts(dropna=False)
+            .sort_index()
+        )
+        print(modelling["current_dpd_numeric"].value_counts(dropna=False).sort_index())
+        write_parquet(
+            modelling,
+            model_input_path,
+        )
+
+        logger.info(
+            "Behavioral dataset construction completed: "
+            "provider=%s vintage=%s rows=%s columns=%s "
+            "unique_loans=%s observation_ages=%s events=%s "
+            "path=%s duration_seconds=%.2f",
+            provider,
+            vintage,
+            f"{len(modelling):,}",
+            modelling.shape[1],
+            f"{modelling['loan_id'].nunique():,}",
+            sorted(modelling["observation_age"].unique().tolist()),
+            f"{int(modelling['future_90dpd_12m'].sum()):,}",
+            model_input_path,
+            perf_counter() - start,
+        )
 
 
-def build_modeling_dataset(
+def build_modelling_dataset(
     config: dict,
 ) -> None:
     """
@@ -285,10 +635,10 @@ def build_modeling_dataset(
     approach = config["parameters"]["modelling_approach"]
 
     if approach == "origination":
-        build_modeling_dataset_origination(config)
+        build_modelling_dataset_origination(config)
 
     elif approach == "behavioral":
-        build_modeling_dataset_behavioral(config)
+        build_modelling_dataset_behavioral(config)
 
     else:
         raise ValueError(

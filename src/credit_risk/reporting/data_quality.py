@@ -23,7 +23,7 @@ def load_reporting_data(
     base_path = catalog["base"]
     provider = parameters["data"]["data_provider"]
     vintage = parameters["reporting"]["vintage"]
-
+    modelling_approach = parameters["modelling_approach"]
     origination_path = create_path(
         base_path,
         catalog,
@@ -44,6 +44,7 @@ def load_reporting_data(
         base_path,
         catalog,
         "model_input_path",
+        modelling_approach,
         provider,
         vintage,
     )

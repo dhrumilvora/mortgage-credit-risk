@@ -9,7 +9,7 @@ from time import perf_counter
 from credit_risk.utils.config import read_config
 from credit_risk.utils.logging import configure_logging
 
-from credit_risk.pipelines.data_preprocess import build_modeling_dataset
+from credit_risk.pipelines.data_preprocess import build_modelling_dataset
 from credit_risk.pipelines.ingest import ingest
 from credit_risk.pipelines.reporting import run_reporting_pipeline
 from credit_risk.pipelines.modelling import run_modelling_pipeline
@@ -55,7 +55,7 @@ def run_pipeline(project_path: str | Path) -> None:
     start = perf_counter()
     logger.info("━━ Pipeline started ━━ project=%s", project_root.resolve())
     ingest(config)
-    build_modeling_dataset(config)
+    build_modelling_dataset(config)
     run_reporting_pipeline(config)
     run_modelling_pipeline(config)
     run_evaluation_pipeline(config)

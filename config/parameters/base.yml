@@ -6,14 +6,15 @@ parameters:
 
   project:
     name: mortgage-credit-risk
-  modelling_approach: "origination" # origination / behavioral
-  # ============================================================
-  # LOGGING
-  # ============================================================
+  modelling_approach: "behavioral" # origination / behavioral
+
   behavioral:
     observation_ages: [ 6, 12 ]
     prediction_horizon_months: 12
     serious_delinquency_threshold: 3
+  # ============================================================
+  # LOGGING
+  # ===========================================================
   logging:
     enabled: true
     level: INFO
@@ -24,7 +25,7 @@ parameters:
   # ============================================================
 
   reporting:
-    skip: fa;se
+    skip: true
 
     # Vintage used for standalone reporting / QC analysis.
     vintage: 2015
@@ -39,13 +40,13 @@ parameters:
     # Vintages to ingest and preprocess.
     all_vintages:
     - 2015
-    - 2016
-    - 2017
-    - 2018
-    - 2019
-    - 2020
-    - 2021
-    - 2022
+    # - 2016
+    # - 2017
+    # - 2018
+    # - 2019
+    # - 2020
+    # - 2021
+    # - 2022
 
     id_col: "loan_id"
     time: "period"
@@ -55,7 +56,7 @@ parameters:
       chunksize: 2500000
 
     preprocess:
-      skip: true
+      skip: false
 
       # --------------------------------------------------------
       # Baseline numerical features
@@ -285,7 +286,7 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: false
+    skip: true
 
     version: test_unbalanced
 
@@ -405,7 +406,7 @@ parameters:
   # ============================================================
 
   evaluation:
-    skip: false
+    skip: true
 
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run
