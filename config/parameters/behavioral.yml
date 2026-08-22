@@ -73,15 +73,14 @@ parameters:
       - super_conforming_flag
       - harp_indicator
       - property_state
+      # # ----------------------------------------------------------
+      # # Binned origination variables
+      # # ----------------------------------------------------------
 
-      # ----------------------------------------------------------
-      # Binned origination variables
-      # ----------------------------------------------------------
-
-      - credit_score_bins
-      - original_ltv_bins
-      - original_cltv_bins
-      - original_dti_bins
+      # - credit_score_bins
+      # - original_ltv_bins
+      # - original_cltv_bins
+      # - original_dti_bins
 
       engineered_features:
 

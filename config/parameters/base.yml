@@ -54,7 +54,7 @@ parameters:
       chunksize: 2500000
 
     preprocess:
-      skip: false
+      skip: true
 
       # --------------------------------------------------------
       # Baseline numerical features
@@ -90,7 +90,7 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: true
+    skip: false
 
     version: test_unbalanced
 

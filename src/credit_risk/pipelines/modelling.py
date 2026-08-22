@@ -38,6 +38,7 @@ def run_modelling_pipeline(config: dict) -> None:
     development_df = load_modelling_vintage(config, development_vintages)
     oot_df = load_modelling_vintage(config, oot_vintages)
     train_df, test_df = stratified_data_split(development_df, config)
+
     train_path = create_path(
         config["catalog"]["base"],
         config["catalog"],

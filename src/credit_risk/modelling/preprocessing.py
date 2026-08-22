@@ -15,8 +15,8 @@ def split_features_target(
         + config["parameters"]["modelling"]["features"]["categorical_features"]
         + config["parameters"]["modelling"]["features"]["engineered_features"]
     )
-    approach = config["parameters"]["modelling_approach"]
-    target = config["parameters"]["target"][approach]["name"]
+    # approach = config["parameters"]["modelling_approach"]
+    target = config["parameters"]["target"]["name"]
 
     missing_features = sorted(set(MODEL_FEATURES) - set(df.columns))
 
