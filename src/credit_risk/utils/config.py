@@ -22,12 +22,115 @@ def _load_yaml(path: Path) -> dict:
     return config
 
 
-def read_config(project_path: Path) -> dict:
-    parameter_path = project_path / "config" / "parameters" / "base.yml"
+def _deep_merge(
+    base: dict,
+    override: dict,
+) -> dict:
+    """
+    Recursively merge override into base.
+
+    Nested dictionaries are merged recursively. Non-dictionary values
+    from override replace values from base.
+    """
+    result = base.copy()
+
+    for key, value in override.items():
+
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(
+                result[key],
+                value,
+            )
+
+        else:
+            result[key] = value
+
+    return result
+
+
+def read_config(
+    project_path: Path,
+) -> dict:
+    """
+    Load common and approach-specific parameters together with catalog.
+
+    The returned configuration has the same structure as before:
+
+        config["parameters"]
+        config["catalog"]
+
+    The modelling approach is read from parameters/base.yml and determines
+    which approach-specific parameter file is loaded.
+    """
+
+    parameters_dir = project_path / "config" / "parameters"
+
+    base_parameter_path = parameters_dir / "base.yml"
+
     catalog_path = project_path / "config" / "catalog" / "base.yml"
 
-    parameters = _load_yaml(parameter_path)
-    catalog = _load_yaml(catalog_path)
+    # --------------------------------------------------------------
+    # Load common parameters first.
+    # --------------------------------------------------------------
+
+    base_parameters = _load_yaml(
+        base_parameter_path,
+    )
+
+    # --------------------------------------------------------------
+    # Resolve modelling approach.
+    # --------------------------------------------------------------
+
+    approach = base_parameters["parameters"].get(
+        "modelling_approach",
+    )
+
+    if not approach:
+        raise ValueError("Missing 'modelling_approach' in " f"{base_parameter_path}")
+
+    # --------------------------------------------------------------
+    # Load approach-specific parameters.
+    #
+    # Example:
+    #   modelling_approach: origination
+    #       -> parameters/origination.yml
+    #
+    #   modelling_approach: behavioral
+    #       -> parameters/behavioral.yml
+    # --------------------------------------------------------------
+
+    approach_parameter_path = parameters_dir / f"{approach}.yml"
+
+    if not approach_parameter_path.exists():
+        raise FileNotFoundError(
+            "Approach-specific parameter file does not exist: "
+            f"{approach_parameter_path}"
+        )
+
+    approach_parameters = _load_yaml(
+        approach_parameter_path,
+    )
+
+    # --------------------------------------------------------------
+    # Merge base + approach-specific parameters.
+    # --------------------------------------------------------------
+
+    parameters = _deep_merge(
+        base_parameters,
+        approach_parameters,
+    )
+
+    # --------------------------------------------------------------
+    # Catalog remains completely unchanged.
+    # --------------------------------------------------------------
+
+    catalog = _load_yaml(
+        catalog_path,
+    )
+
+    # --------------------------------------------------------------
+    # Return the exact same top-level config structure as before.
+    # --------------------------------------------------------------
 
     config = {
         **parameters,

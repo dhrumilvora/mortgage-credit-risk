@@ -597,12 +597,6 @@ def build_modelling_dataset_behavioral(
         # Persist final V2 landmark modelling dataset
         # ------------------------------------------------------------------
 
-        print(
-            modelling["current_loan_delinquency_status"]
-            .value_counts(dropna=False)
-            .sort_index()
-        )
-        print(modelling["current_dpd_numeric"].value_counts(dropna=False).sort_index())
         write_parquet(
             modelling,
             model_input_path,

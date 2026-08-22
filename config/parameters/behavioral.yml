@@ -1,0 +1,97 @@
+parameters:
+
+  # ============================================================
+  # BEHAVIOURAL OBSERVATION / TARGET
+  # ============================================================
+
+  behavioral:
+
+    observation_ages:
+    - 6
+    - 12
+
+    prediction_horizon_months: 12
+
+  # ============================================================
+  # MODELLING
+  # ============================================================
+
+  modelling:
+
+    features:
+
+      # ----------------------------------------------------------
+      # Origination features retained for V2 baseline comparison
+      # ----------------------------------------------------------
+
+      numerical_features:
+
+      - number_of_borrowers
+      - mi_percentage
+      - original_upb
+      - original_interest_rate
+      - original_loan_term
+
+      # ----------------------------------------------------------
+      # Current point-in-time state
+      # ----------------------------------------------------------
+
+      - current_actual_upb
+      - current_interest_rate
+      - estimated_ltv
+      - calculated_loan_age
+      - remaining_months_to_legal_maturity
+
+      # ----------------------------------------------------------
+      # Behavioural history
+      # ----------------------------------------------------------
+
+      - current_dpd_numeric
+      - max_dpd_to_date
+      - ever_30dpd_to_date
+      - delinquency_months_to_date
+      - months_since_last_delinquency
+
+      # ----------------------------------------------------------
+      # Post-origination trajectory
+      # ----------------------------------------------------------
+
+      - upb_change_from_origination
+      - upb_pct_change_from_origination
+
+      categorical_features:
+
+      # ----------------------------------------------------------
+      # Origination categorical variables
+      # ----------------------------------------------------------
+
+      - first_time_homebuyer_flag
+      - property_type
+      - occupancy_status
+      - loan_purpose
+      - channel
+      - super_conforming_flag
+      - harp_indicator
+      - property_state
+
+      # ----------------------------------------------------------
+      # Binned origination variables
+      # ----------------------------------------------------------
+
+      - credit_score_bins
+      - original_ltv_bins
+      - original_cltv_bins
+      - original_dti_bins
+
+      engineered_features:
+
+      - original_dti_missing
+
+  # ============================================================
+  # TARGET
+  # ============================================================
+
+  target:
+
+    name: future_90dpd_12m
+    horizon_months: 12

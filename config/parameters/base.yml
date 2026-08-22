@@ -6,15 +6,13 @@ parameters:
 
   project:
     name: mortgage-credit-risk
+
   modelling_approach: "behavioral" # origination / behavioral
 
-  behavioral:
-    observation_ages: [ 6, 12 ]
-    prediction_horizon_months: 12
-    serious_delinquency_threshold: 3
   # ============================================================
   # LOGGING
-  # ===========================================================
+  # ============================================================
+
   logging:
     enabled: true
     level: INFO
@@ -40,13 +38,13 @@ parameters:
     # Vintages to ingest and preprocess.
     all_vintages:
     - 2015
-    # - 2016
-    # - 2017
-    # - 2018
-    # - 2019
-    # - 2020
-    # - 2021
-    # - 2022
+    - 2016
+    - 2017
+    - 2018
+    - 2019
+    - 2020
+    - 2021
+    - 2022
 
     id_col: "loan_id"
     time: "period"
@@ -86,200 +84,6 @@ parameters:
         - super_conforming_flag
         - harp_indicator
         - property_state
-        - msa
-
-  # ============================================================
-  # FEATURE ENGINEERING
-  # ============================================================
-
-  feature_engineering:
-
-    # ----------------------------------------------------------
-    # Feature interactions
-    #
-    # Kept configurable for future experiments.
-    # Currently disabled because interactions did not improve
-    # OOT XGBoost performance.
-    # ----------------------------------------------------------
-
-    interactions:
-
-      credit_score_x_dti:
-        enabled: false
-        left: credit_score
-        right: original_dti
-
-      credit_score_x_ltv:
-        enabled: false
-        left: credit_score
-        right: original_ltv
-
-      ltv_x_dti:
-        enabled: false
-        left: original_ltv
-        right: original_dti
-
-      ltv_x_cltv:
-        enabled: false
-        left: original_ltv
-        right: original_cltv
-
-    # ----------------------------------------------------------
-    # Transformations
-    # ----------------------------------------------------------
-
-    transformations:
-
-      # --------------------------------------------------------
-      # Credit score
-      #
-      # Credit score is unlikely to have a strictly linear
-      # relationship with log-odds of delinquency.
-      # Binning allows LR to learn different risk levels
-      # across score ranges.
-      # --------------------------------------------------------
-
-      credit_score:
-        enabled: true
-        method: bin
-
-        bins:
-        - 0
-        - 580
-        - 620
-        - 660
-        - 700
-        - 740
-        - 780
-        - 850
-
-        labels:
-        - "<580"
-        - "580-619"
-        - "620-659"
-        - "660-699"
-        - "700-739"
-        - "740-779"
-        - "780+"
-
-      # --------------------------------------------------------
-      # Original UPB
-      #
-      # UPB is right-skewed. Log transformation can reduce
-      # skewness and allow the model to capture a more
-      # proportional relationship between loan size and risk.
-      # --------------------------------------------------------
-
-      original_upb:
-        enabled: true
-        method: log
-
-      # --------------------------------------------------------
-      # DTI
-      #
-      # DTI has a potentially nonlinear relationship with
-      # delinquency risk. Binning allows different risk levels
-      # across DTI ranges.
-      # --------------------------------------------------------
-
-      original_dti:
-        enabled: true
-        method: bin
-
-        bins:
-        - 0
-        - 20
-        - 30
-        - 40
-        - 50
-        - 60
-        - 100
-        - inf
-
-        labels:
-        - "<20"
-        - "20-29"
-        - "30-39"
-        - "40-49"
-        - "50-59"
-        - "60-99"
-        - "100+"
-
-      # --------------------------------------------------------
-      # LTV
-      #
-      # LTV is expected to have nonlinear risk behavior.
-      # Binning lets the model capture changes in risk around
-      # common leverage ranges.
-      # --------------------------------------------------------
-
-      original_ltv:
-        enabled: true
-        method: bin
-
-        bins:
-        - 0
-        - 60
-        - 70
-        - 75
-        - 80
-        - 85
-        - 90
-        - 95
-        - 100
-        - 150
-        - inf
-
-        labels:
-        - "<60"
-        - "60-69"
-        - "70-74"
-        - "75-79"
-        - "80-84"
-        - "85-89"
-        - "90-94"
-        - "95-99"
-        - "100-149"
-        - "150+"
-
-      # --------------------------------------------------------
-      # CLTV
-      #
-      # CLTV is also expected to have nonlinear risk behavior.
-      # Coarse bins are used because the distribution contains
-      # extreme upper-tail observations.
-      # --------------------------------------------------------
-
-      original_cltv:
-        enabled: true
-        method: bin
-
-        bins:
-        - 0
-        - 60
-        - 70
-        - 75
-        - 80
-        - 85
-        - 90
-        - 95
-        - 100
-        - 120
-        - 150
-        - inf
-
-        labels:
-        - "<60"
-        - "60-69"
-        - "70-74"
-        - "75-79"
-        - "80-84"
-        - "85-89"
-        - "90-94"
-        - "95-99"
-        - "100-119"
-        - "120-149"
-        - "150+"
 
   # ============================================================
   # MODELLING
@@ -298,57 +102,10 @@ parameters:
     - 2015
     - 2016
     - 2017
-    - 2018
+
     vintages_oot:
-
+    - 2018
     - 2019
-    # ----------------------------------------------------------
-    # Numerical model features
-    #
-    # Original continuous variables are retained where we want
-    # the model to use their continuous relationship.
-    #
-    # Transformed variables are added explicitly.
-    # ----------------------------------------------------------
-
-    features:
-
-      numerical_features:
-      - original_dti
-      - number_of_borrowers
-      - mi_percentage
-      - original_upb
-      - original_interest_rate
-      - original_loan_term
-
-      # Generated by log transformation of original_upb.
-      - original_upb_log
-      # --------------------------------------------------------
-      # Categorical model features
-      # --------------------------------------------------------
-
-      categorical_features:
-      - first_time_homebuyer_flag
-      - property_type
-      - occupancy_status
-      - loan_purpose
-      - channel
-      - super_conforming_flag
-      - harp_indicator
-      - property_state
-      - msa
-
-      # Transformed numerical features.
-      - credit_score_bins
-      - original_ltv_bins
-      - original_cltv_bins
-      # --------------------------------------------------------
-      # Engineered features
-      # --------------------------------------------------------
-
-      engineered_features:
-      - original_dti_missing
-
     # ----------------------------------------------------------
     # Validation
     # ----------------------------------------------------------
@@ -365,7 +122,7 @@ parameters:
 
     xgboost:
       n_estimators: 300
-      max_depth: 2
+      max_depth: 4
       learning_rate: 0.05
       subsample: 0.8
       colsample_bytree: 0.8
@@ -375,11 +132,7 @@ parameters:
       objective: "binary:logistic"
       eval_metric: logloss
       n_jobs: -1
-      scale_pos_weight: 4
-
-    # ----------------------------------------------------------
-    # Logistic regression
-    # ----------------------------------------------------------
+      scale_pos_weight: 1.0
 
     logistic_regression:
       penalty: l2
@@ -389,16 +142,13 @@ parameters:
       class_weight: null
 
   # ============================================================
-  # TARGET
+  # COMMON TARGET DEFINITIONS
   # ============================================================
 
   target:
-    name: ever_90dpd_24m
 
     serious_delinquency_threshold: 3
     max_eligible_start_age: 1
-    horizon_months: 24
-
     voluntary_payoffs_zbc: "01"
 
   # ============================================================
@@ -414,7 +164,7 @@ parameters:
 
     model:
       version: test_unbalanced
-      type: xgboost
+      type: logistic_regression
 
     datasets:
       validation: true
@@ -447,9 +197,3 @@ parameters:
       - [ 0.10, 0.20 ]
       - [ 0.20, 0.50 ]
       - [ 0.50, 1.00 ]
-
-    shap:
-      enabled: true
-      max_samples: 5000
-      background_size: 1000
-      random_state: 42

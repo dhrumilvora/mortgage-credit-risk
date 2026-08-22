@@ -218,6 +218,9 @@ def build_behavioral_features(
     master = add_behavioral_history_features(
         master,
     )
+    master = add_loan_trajectory_features(
+        master,
+    )
     results = []
 
     for observation_age in observation_ages:
@@ -399,5 +402,51 @@ def add_behavioral_history_features(
         last_delinquency_age.isna(),
         "months_since_last_delinquency",
     ] = pd.NA
+
+    return result
+
+
+def add_loan_trajectory_features(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Add simple post-origination loan trajectory features.
+
+    Features are calculated using only information available at the
+    current observation point.
+
+    Required columns:
+        original_upb
+        current_actual_upb
+        original_interest_rate
+        current_interest_rate
+    """
+    result = df.copy()
+
+    # --------------------------------------------------------------
+    # UPB change from origination
+    # --------------------------------------------------------------
+
+    result["upb_change_from_origination"] = (
+        result["current_actual_upb"] - result["original_upb"]
+    )
+
+    # --------------------------------------------------------------
+    # Percentage UPB change from origination
+    #
+    # Preserve missing values and avoid division by zero.
+    # --------------------------------------------------------------
+
+    result["upb_pct_change_from_origination"] = result[
+        "upb_change_from_origination"
+    ].div(result["original_upb"].replace(0, pd.NA))
+
+    # --------------------------------------------------------------
+    # Interest-rate change from origination
+    # --------------------------------------------------------------
+
+    result["rate_change_from_origination"] = (
+        result["current_interest_rate"] - result["original_interest_rate"]
+    )
 
     return result
