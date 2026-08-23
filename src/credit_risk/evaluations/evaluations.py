@@ -2,6 +2,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import logging
+from scipy.special import expit, logit
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_curve
 from credit_risk.evaluations.metrics import (
     calculate_confusion_matrix,
@@ -212,3 +214,149 @@ def calculate_ks_curve_data(
             "ks",
         ]
     ]
+
+
+def calculate_top_k_metrics(
+    y_true: pd.Series,
+    y_pred: np.ndarray,
+    top_fractions: list[float] | None = None,
+) -> pd.DataFrame:
+    """
+    Calculate event capture and precision at the top-risk portion
+    of the population.
+
+    Rows are ranked from highest predicted risk to lowest.
+    """
+    if top_fractions is None:
+        top_fractions = [0.05, 0.10, 0.20]
+
+    evaluation_df = (
+        pd.DataFrame(
+            {
+                "actual": y_true.to_numpy(),
+                "predicted_pd": y_pred,
+            }
+        )
+        .sort_values(
+            "predicted_pd",
+            ascending=False,
+        )
+        .reset_index(drop=True)
+    )
+
+    total_events = evaluation_df["actual"].sum()
+    total_population = len(evaluation_df)
+
+    results = []
+
+    for fraction in top_fractions:
+        top_n = max(
+            1,
+            int(np.ceil(total_population * fraction)),
+        )
+
+        top_population = evaluation_df.iloc[:top_n]
+
+        events_captured = top_population["actual"].sum()
+
+        results.append(
+            {
+                "top_fraction": fraction,
+                "population": top_n,
+                "population_share": top_n / total_population,
+                "events_captured": int(events_captured),
+                "event_capture_rate": (
+                    events_captured / total_events if total_events > 0 else np.nan
+                ),
+                "precision": top_population["actual"].mean(),
+                "average_predicted_pd": (top_population["predicted_pd"].mean()),
+                "lift": (
+                    top_population["actual"].mean() / evaluation_df["actual"].mean()
+                    if evaluation_df["actual"].mean() > 0
+                    else np.nan
+                ),
+            }
+        )
+
+    return pd.DataFrame(results)
+
+
+def fit_calibration(
+    y_true: pd.Series,
+    y_proba: np.ndarray,
+) -> tuple[float, float]:
+    """
+    Fit logistic calibration on a validation dataset.
+
+    Returns:
+        calibration_intercept
+        calibration_slope
+    """
+    y_true = np.asarray(y_true)
+    y_proba = np.asarray(y_proba)
+
+    if len(y_true) != len(y_proba):
+        raise ValueError(
+            "Calibration target and predictions must have the same length."
+        )
+
+    if len(y_true) == 0:
+        raise ValueError("Calibration dataset is empty.")
+
+    if np.unique(y_true).size < 2:
+        raise ValueError("Calibration target must contain at least two classes.")
+
+    # Keep probabilities strictly inside (0, 1) before logit.
+    eps = np.finfo(float).eps
+
+    clipped_proba = np.clip(
+        y_proba,
+        eps,
+        1.0 - eps,
+    )
+
+    logit_prediction = logit(
+        clipped_proba,
+    )
+
+    calibration_model = LogisticRegression(
+        solver="lbfgs",
+        max_iter=1000,
+    )
+
+    calibration_model.fit(
+        logit_prediction.reshape(-1, 1),
+        y_true,
+    )
+
+    return (
+        float(calibration_model.intercept_[0]),
+        float(calibration_model.coef_[0][0]),
+    )
+
+
+def apply_calibration(
+    y_proba: np.ndarray,
+    intercept: float,
+    slope: float,
+) -> np.ndarray:
+    """
+    Apply a fitted logistic calibration mapping.
+    """
+    eps = np.finfo(float).eps
+
+    clipped_proba = np.clip(
+        y_proba,
+        eps,
+        1.0 - eps,
+    )
+
+    logit_prediction = logit(
+        clipped_proba,
+    )
+
+    calibrated_logit = intercept + slope * logit_prediction
+
+    return expit(
+        calibrated_logit,
+    )

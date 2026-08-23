@@ -9,6 +9,9 @@ import pandas as pd
 from credit_risk.evaluations.evaluations import (
     evaluate_dataset,
     generate_predictions,
+    calculate_top_k_metrics,
+    fit_calibration,
+    apply_calibration,
 )
 from credit_risk.evaluations.reporting import save_evaluation_results
 from credit_risk.evaluations.shap import evaluate_shap
@@ -24,6 +27,7 @@ def evaluate_split(
     preprocessor,
     df: pd.DataFrame,
     config: dict,
+    return_predictions: Bool = False,
 ) -> dict:
     """Generate predictions and evaluate a single dataset split."""
 
@@ -40,14 +44,21 @@ def evaluate_split(
         X=X,
         threshold=evaluation_config["classification"]["threshold"],
     )
-
-    return evaluate_dataset(
+    evaluations_results = evaluate_dataset(
         y_true=y,
         y_pred=y_pred,
         y_proba=y_proba,
         n_deciles=evaluation_config["risk"]["n_deciles"],
         calibration_bins=evaluation_config["calibration"]["bins"],
     )
+    evaluations_results["top_k_metrics"] = calculate_top_k_metrics(
+        y_true=y,
+        y_pred=y_proba,
+    ).to_dict(orient="records")
+    if return_predictions:
+        return evaluations_results, y, y_proba
+
+    return evaluations_results
 
 
 def run_evaluation_pipeline(
@@ -121,18 +132,30 @@ def run_evaluation_pipeline(
 
         validation_df = pd.read_parquet(validation_path)
 
-        validation_evaluation = evaluate_split(
+        validation_evaluation, y_validation, y_validation_proba = evaluate_split(
             model=model,
             preprocessor=preprocessor,
             df=validation_df,
             config=scoring_config,
+            return_predictions=True,
         )
+
         evaluate_shap(
             model=model,
             preprocessor=preprocessor,
             df=validation_df,
             config=scoring_config,
             dataset_name="validation",
+        )
+        calibration_intercept, calibration_slope = fit_calibration(
+            y_true=y_validation,
+            y_proba=y_validation_proba,
+        )
+
+        logger.info(
+            "Calibration fitted on validation: " "intercept=%.6f slope=%.6f",
+            calibration_intercept,
+            calibration_slope,
         )
 
         logger.info("Validation evaluation completed.")
@@ -149,11 +172,12 @@ def run_evaluation_pipeline(
 
         oot_df = pd.read_parquet(oot_path)
 
-        oot_evaluation = evaluate_split(
+        oot_evaluation, y_oot, y_oot_proba = evaluate_split(
             model=model,
             preprocessor=preprocessor,
             df=oot_df,
             config=scoring_config,
+            return_predictions=True,
         )
         evaluate_shap(
             model=model,
@@ -162,6 +186,37 @@ def run_evaluation_pipeline(
             config=scoring_config,
             dataset_name="oot",
         )
+        y_oot_calibrated_proba = apply_calibration(
+            y_proba=y_oot_proba,
+            intercept=calibration_intercept,
+            slope=calibration_slope,
+        )
+        calibrated_threshold = scoring_config["parameters"]["evaluation"][
+            "classification"
+        ]["threshold"]
+
+        y_oot_calibrated_pred = (y_oot_calibrated_proba >= calibrated_threshold).astype(
+            int
+        )
+        calibrated_oot_evaluation = evaluate_dataset(
+            y_true=y_oot,
+            y_pred=y_oot_calibrated_pred,
+            y_proba=y_oot_calibrated_proba,
+            n_deciles=scoring_config["parameters"]["evaluation"]["risk"]["n_deciles"],
+            calibration_bins=scoring_config["parameters"]["evaluation"]["calibration"][
+                "bins"
+            ],
+        )
+
+        calibrated_oot_evaluation["top_k_metrics"] = calculate_top_k_metrics(
+            y_true=y_oot,
+            y_pred=y_oot_calibrated_proba,
+        ).to_dict(orient="records")
+
+        calibrated_oot_evaluation["calibration_applied"] = {
+            "intercept": calibration_intercept,
+            "slope": calibration_slope,
+        }
         logger.info("OOT evaluation completed.")
 
     # --------------------------------------------------------------
@@ -171,6 +226,7 @@ def run_evaluation_pipeline(
     save_evaluation_results(
         validation_evaluation=validation_evaluation,
         oot_evaluation=oot_evaluation,
+        oot_calibration=calibrated_oot_evaluation,
         config=config,
     )
 

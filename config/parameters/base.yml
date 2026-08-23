@@ -90,7 +90,7 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: false
+    skip: true
 
     version: test_unbalanced
 
@@ -156,15 +156,15 @@ parameters:
   # ============================================================
 
   evaluation:
-    skip: true
+    skip: false
 
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run
-    mode: same_run
+    mode: existing_model
 
     model:
       version: test_unbalanced
-      type: logistic_regression
+      type: xgboost
 
     datasets:
       validation: true

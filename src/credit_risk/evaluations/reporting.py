@@ -64,7 +64,7 @@ def _get_evaluation_dir(
 ) -> Path:
     """Resolve and create the evaluation output directory."""
     approach = config["parameters"]["modelling_approach"]
-    if dataset_name not in {"validation", "oot"}:
+    if dataset_name not in {"validation", "oot", "oot_calibration"}:
         raise ValueError(f"Unsupported evaluation dataset: {dataset_name}")
 
     parameters = config["parameters"]
@@ -118,15 +118,33 @@ def save_evaluation_json(
 
     evaluation_path = evaluation_dir / "evaluation_results.json"
 
-    serializable_evaluation = _make_json_serializable(evaluation)
-    to_save = {
-        "ds_metrics": serializable_evaluation["ds_metrics"],
-        "confusion_matrix": serializable_evaluation["confusion_matrix"],
-        "credit_risk_metrics": serializable_evaluation["credit_risk_metrics"],
-        "risk_deciles": serializable_evaluation["risk_deciles"],
-        "calibration": serializable_evaluation["calibration"],
-        "calibration_summary": serializable_evaluation["calibration_summary"],
-    }
+    serializable_evaluation = _make_json_serializable(
+        evaluation,
+    )
+    to_save = {}
+    if "calibration_applied" in serializable_evaluation.keys():
+        evaluation_path = evaluation_dir / "evaluation_results_calibrated.json"
+        to_save = {
+            "ds_metrics": serializable_evaluation["ds_metrics"],
+            "confusion_matrix": serializable_evaluation["confusion_matrix"],
+            "credit_risk_metrics": serializable_evaluation["credit_risk_metrics"],
+            "risk_deciles": serializable_evaluation["risk_deciles"],
+            "top_k_metrics": serializable_evaluation["top_k_metrics"],
+            "calibration": serializable_evaluation["calibration"],
+            "calibration_summary": serializable_evaluation["calibration_summary"],
+            "calibration_applied": serializable_evaluation["calibration_applied"],
+        }
+    else:
+        to_save = {
+            "ds_metrics": serializable_evaluation["ds_metrics"],
+            "confusion_matrix": serializable_evaluation["confusion_matrix"],
+            "credit_risk_metrics": serializable_evaluation["credit_risk_metrics"],
+            "risk_deciles": serializable_evaluation["risk_deciles"],
+            "top_k_metrics": serializable_evaluation["top_k_metrics"],
+            "calibration": serializable_evaluation["calibration"],
+            "calibration_summary": serializable_evaluation["calibration_summary"],
+        }
+
     with open(
         evaluation_path,
         "w",
@@ -693,6 +711,7 @@ def _save_calibration_chart(
 def save_evaluation_results(
     validation_evaluation: dict | None,
     oot_evaluation: dict | None,
+    oot_calibration: dict | None,
     config: dict,
 ) -> None:
     """
@@ -705,6 +724,7 @@ def save_evaluation_results(
     evaluations = {
         "validation": validation_evaluation,
         "oot": oot_evaluation,
+        "oot_calibration": oot_calibration,
     }
 
     for dataset_name, evaluation in evaluations.items():
