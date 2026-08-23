@@ -90,7 +90,7 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: true
+    skip: false
 
     version: test_unbalanced_quarterly
 
@@ -102,22 +102,18 @@ parameters:
     - 2015
     - 2016
     - 2017
-    - 2018
-    - 2019
-    - 2020
+
     vintages_test:
     - 2018
-    - 2019
     vintages_oot:
-    - 2020
-    - 2021
-    - 2022
+    - 2019
     # ----------------------------------------------------------
     # Validation
     # ----------------------------------------------------------
 
     validation_size: 0.2
     random_state: 42
+    train_test_split: "yearly"
     stratify: true
 
     # ----------------------------------------------------------

@@ -5,7 +5,7 @@ import numpy as np
 from credit_risk.utils.config import create_path
 from credit_risk.data.writers import write_parquet
 from credit_risk.modelling.data import load_modelling_vintage
-from credit_risk.modelling.split import stratified_data_split
+from credit_risk.modelling.split import split_dataset
 from credit_risk.modelling.preprocessing import (
     split_features_target,
     build_preprocessor,
@@ -24,7 +24,13 @@ def run_modelling_pipeline(config: dict) -> None:
         return
     start = perf_counter()
 
-    development_vintages = modelling_config["vintages_train"]
+    development_vintages = None
+    if modelling_config["train_test_split"] == "random":
+        development_vintages = modelling_config["vintages_train"]
+    elif modelling_config["train_test_split"] == "yearly":
+        development_vintages = (
+            modelling_config["vintages_train"] + modelling_config["vintages_test"]
+        )
     oot_vintages = modelling_config["vintages_oot"]
     logger.info(
         "Vintages being considered in model training pipeline: %s",
@@ -37,7 +43,7 @@ def run_modelling_pipeline(config: dict) -> None:
 
     development_df = load_modelling_vintage(config, development_vintages)
     oot_df = load_modelling_vintage(config, oot_vintages)
-    train_df, test_df = stratified_data_split(development_df, config)
+    train_df, test_df = split_dataset(development_df, config)
 
     train_path = create_path(
         config["catalog"]["base"],
