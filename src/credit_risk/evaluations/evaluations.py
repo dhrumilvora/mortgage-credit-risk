@@ -4,7 +4,7 @@ import pandas as pd
 import logging
 from scipy.special import expit, logit
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_curve
+from sklearn.metrics import roc_curve, f1_score, precision_score, recall_score
 from credit_risk.evaluations.metrics import (
     calculate_confusion_matrix,
     calculate_ds_metrics,
@@ -359,4 +359,124 @@ def apply_calibration(
 
     return expit(
         calibrated_logit,
+    )
+
+
+def evaluate_thresholds(
+    y_true: pd.Series, y_proba: pd.Series, config: dict
+) -> pd.DataFrame:
+    threshold_config = config["parameters"]["evaluation"]["threshold_selection"]
+
+    if not threshold_config["enabled"]:
+        return pd.DataFrame()
+
+    thresholds = threshold_config["candidate_thresholds"]
+
+    if not thresholds:
+        raise ValueError(
+            "evaluation.threshold_selection.candidate_thresholds " "cannot be empty."
+        )
+
+    y_true_array = np.asarray(
+        y_true,
+    )
+
+    y_proba_array = np.asarray(
+        y_proba,
+    )
+
+    if y_true_array.ndim != 1:
+        raise ValueError("y_true must be one-dimensional.")
+
+    if y_proba_array.ndim != 1:
+        raise ValueError("y_proba must be one-dimensional.")
+
+    if len(y_true_array) != len(y_proba_array):
+        raise ValueError("y_true and y_proba must contain the same number of rows.")
+
+    if np.isnan(y_proba_array).any():
+        raise ValueError("Predicted probabilities contain missing values.")
+
+    if ((y_proba_array < 0) | (y_proba_array > 1)).any():
+        raise ValueError("Predicted probabilities must lie between 0 and 1.")
+
+    if pd.isna(y_true_array).any():
+        raise ValueError("Target contains missing values.")
+
+    total_population = len(
+        y_true_array,
+    )
+
+    total_events = int(
+        y_true_array.sum(),
+    )
+
+    if total_population == 0:
+        raise ValueError("Threshold evaluation dataset is empty.")
+
+    if total_events == 0:
+        raise ValueError("Threshold evaluation requires at least one positive event.")
+
+    results = []
+
+    for threshold in thresholds:
+
+        threshold = float(threshold)
+
+        if not 0 < threshold < 1:
+            raise ValueError(
+                "Each candidate threshold must be strictly " "between 0 and 1."
+            )
+
+        y_pred = (y_proba_array >= threshold).astype("int8")
+
+        population_flagged = int(
+            y_pred.sum(),
+        )
+
+        true_positive = int(((y_true_array == 1) & (y_pred == 1)).sum())
+
+        false_positive = int(((y_true_array == 0) & (y_pred == 1)).sum())
+
+        false_negative = int(((y_true_array == 1) & (y_pred == 0)).sum())
+
+        precision = precision_score(
+            y_true_array,
+            y_pred,
+            zero_division=0,
+        )
+
+        recall = recall_score(
+            y_true_array,
+            y_pred,
+            zero_division=0,
+        )
+
+        f1 = f1_score(
+            y_true_array,
+            y_pred,
+            zero_division=0,
+        )
+
+        results.append(
+            {
+                "threshold": threshold,
+                "population_flagged": population_flagged,
+                "population_flagged_pct": (population_flagged / total_population),
+                "true_positive": true_positive,
+                "false_positive": false_positive,
+                "false_negative": false_negative,
+                "precision": precision,
+                "recall": recall,
+                "event_capture_rate": recall,
+                "f1": f1,
+            }
+        )
+
+    return (
+        pd.DataFrame(results)
+        .sort_values(
+            "threshold",
+        )
+        .reset_index(drop=True)
     )

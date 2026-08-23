@@ -92,7 +92,7 @@ parameters:
   modelling:
     skip: true
 
-    version: test_unbalanced
+    version: test_unbalanced_quarterly
 
     # ----------------------------------------------------------
     # Training / OOT vintage split
@@ -102,10 +102,16 @@ parameters:
     - 2015
     - 2016
     - 2017
-
-    vintages_oot:
     - 2018
     - 2019
+    - 2020
+    vintages_test:
+    - 2018
+    - 2019
+    vintages_oot:
+    - 2020
+    - 2021
+    - 2022
     # ----------------------------------------------------------
     # Validation
     # ----------------------------------------------------------
@@ -118,7 +124,33 @@ parameters:
     # Model algorithm
     # ----------------------------------------------------------
 
-    algorithm: xgboost
+    algorithm: lightgbm
+
+    lightgbm:
+      n_estimators: 300
+      max_depth: 4
+      learning_rate: 0.05
+      num_leaves: 15
+      min_child_samples: 20
+      subsample: 0.8
+      colsample_bytree: 0.8
+      reg_alpha: 0
+      reg_lambda: 1
+      objective: "binary"
+      n_jobs: -1
+      scale_pos_weight: 1.0
+      random_state: 42
+
+    random_forest:
+      n_estimators: 300
+      max_depth: 8
+      min_samples_split: 10
+      min_samples_leaf: 5
+      max_features: "sqrt"
+      bootstrap: true
+      class_weight: null
+      random_state: 42
+      n_jobs: -1
 
     xgboost:
       n_estimators: 300
@@ -133,6 +165,7 @@ parameters:
       eval_metric: logloss
       n_jobs: -1
       scale_pos_weight: 1.0
+      class_weight: balanced
 
     logistic_regression:
       penalty: l2
@@ -161,15 +194,40 @@ parameters:
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run
     mode: existing_model
+    threshold_selection:
+      enabled: true
+      optimisation_metric: f1
+      candidate_thresholds:
+      - 0.005
+      - 0.010
+      - 0.015
+      - 0.020
+      - 0.025
+      - 0.03
+      - 0.04
+      - 0.05
+      - 0.075
+      - 0.1
+      - 0.15
+      - 0.2
+      - 0.25
+      - 0.3
+      - 0.35
+      - 0.4
+      - 0.45
+      - 0.5
+      - 0.55
+      - 0.6
 
     model:
-      version: test_unbalanced
-      type: xgboost
+      version: test_unbalanced_quarterly
+      type: random_forest
 
     datasets:
       validation: true
       oot: true
-
+    shap:
+      enabled: false
     # ----------------------------------------------------------
     # Classification threshold
     # ----------------------------------------------------------

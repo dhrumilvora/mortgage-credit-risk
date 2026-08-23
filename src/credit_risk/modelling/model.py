@@ -7,6 +7,8 @@ from credit_risk.modelling.models.xgboost import train_xgboost
 from credit_risk.modelling.models.linear_regression import (
     train_logistic_regression,
 )
+from credit_risk.modelling.models.lightgbm import train_lightgbm
+from credit_risk.modelling.models.random_forest import train_random_forest
 
 
 def train_model(
@@ -38,11 +40,14 @@ def train_model(
             config,
         )
 
-    if algorithm == "xgboost":
+    elif algorithm == "xgboost":
         return train_xgboost(
             X_train,
             y_train,
             config,
         )
-
+    elif algorithm == "random_forest":
+        return train_random_forest(X_train, y_train, config)
+    elif algorithm == "lightgbm":
+        return train_lightgbm(X_train, y_train, config)
     raise ValueError(f"Unsupported modelling algorithm: {algorithm}")

@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import sys
 
-
 DEFAULT_FORMAT = "%(asctime)s  %(levelname)s  %(name)-12s  %(message)s"
 LEVEL_COLORS = {
     "DEBUG": "\033[36m",
@@ -22,7 +21,7 @@ class ConsoleFormatter(logging.Formatter):
 
     def __init__(self, use_colors: bool) -> None:
         super().__init__(DEFAULT_FORMAT, datefmt="%H:%M:%S")
-        self.use_colors = use_colors and sys.stderr.isatty()
+        self.use_colors = use_colors
 
     def format(self, record: logging.LogRecord) -> str:
         original_name = record.name

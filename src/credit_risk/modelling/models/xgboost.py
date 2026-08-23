@@ -43,6 +43,7 @@ def train_xgboost(
         random_state=modelling["random_state"],
         n_jobs=xgb_config["n_jobs"],
         scale_pos_weight=xgb_config["scale_pos_weight"],
+        class_weight=xgb_config["class_weight"],
     )
 
     model.fit(X_train, y_train)

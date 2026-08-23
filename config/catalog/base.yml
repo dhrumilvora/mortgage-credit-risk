@@ -72,6 +72,11 @@ catalog:
     file_name: "model_evaluation"
     file_type: "folder"
 
+  threshold_summary:
+    folder_name: "05_artifacts"
+    file_name: "threshold_summary"
+    file_type: "csv"
+
   ### Model Input QC  
 
   pipeline_qc:
