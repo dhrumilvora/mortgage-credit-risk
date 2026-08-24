@@ -3,11 +3,11 @@ catalog:
   ## Raw Files
   raw_origination:
     folder_name: "01_raw"
-    file_name: "sample_orig"
+    file_name: "orig"
     file_type: "txt"
   raw_performance:
     folder_name: "01_raw"
-    file_name: "sample_perf"
+    file_name: "perf"
     file_type: "txt"
 
   ## Intermediate Origination & Performance Files

@@ -45,21 +45,22 @@ parameters:
     - 2020
     - 2021
     - 2022
-
+    quarters: [ "Q1", "Q2", "Q3", "Q4" ]
     id_col: "loan_id"
     time: "period"
 
     ingestion:
       skip: true
-      chunksize: 2500000
+      chunksize: 1500000
+      performance_workers: 4
 
     preprocess:
-      skip: true
+      skip: false
 
       # --------------------------------------------------------
       # Baseline numerical features
       # --------------------------------------------------------
-
+      performance_batch_size: 100000
       features:
         numerical_features:
         - credit_score
@@ -102,11 +103,14 @@ parameters:
     - 2015
     - 2016
     - 2017
+    - 2018
 
     vintages_test:
-    - 2018
-    vintages_oot:
     - 2019
+    - 2020
+    vintages_oot:
+    - 2021
+    - 2022
     # ----------------------------------------------------------
     # Validation
     # ----------------------------------------------------------
@@ -189,7 +193,12 @@ parameters:
 
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run
-    mode: existing_model
+    mode: same_run
+
+    model:
+      version: test_unbalanced_quarterly
+      type: random_forest
+
     threshold_selection:
       enabled: true
       optimisation_metric: f1
@@ -214,10 +223,6 @@ parameters:
       - 0.5
       - 0.55
       - 0.6
-
-    model:
-      version: test_unbalanced_quarterly
-      type: random_forest
 
     datasets:
       validation: true

@@ -8,7 +8,7 @@ name = "mortgage-credit-risk"
 version = "0.1.0"
 description = "Production-grade mortgage credit risk modelling framework"
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11,<3.14"
 
 dependencies = [
     "numpy>=2.0",
