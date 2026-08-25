@@ -8,6 +8,11 @@ parameters:
     name: mortgage-credit-risk
 
   modelling_approach: "behavioral" # origination / behavioral
+  engine: "pyspark" # pyspark / pandas
+  spark:
+    master: local[4]
+    driver_memory: 12g
+    shuffle_partitions: 16
 
   # ============================================================
   # LOGGING
@@ -55,8 +60,7 @@ parameters:
       performance_workers: 4
 
     preprocess:
-      skip: false
-
+      skip: true
       # --------------------------------------------------------
       # Baseline numerical features
       # --------------------------------------------------------
@@ -124,7 +128,7 @@ parameters:
     # Model algorithm
     # ----------------------------------------------------------
 
-    algorithm: lightgbm
+    algorithm: random_forest
 
     lightgbm:
       n_estimators: 300
@@ -189,7 +193,7 @@ parameters:
   # ============================================================
 
   evaluation:
-    skip: false
+    skip: true
 
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run

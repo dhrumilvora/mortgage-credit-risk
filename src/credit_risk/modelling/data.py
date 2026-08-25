@@ -9,7 +9,7 @@ from credit_risk.utils.config import create_path
 logger = logging.getLogger(__name__)
 
 
-def load_modelling_vintage(
+def load_modelling_vintage_pandas(
     config: dict,
     vintages: list[int],
 ) -> pd.DataFrame:

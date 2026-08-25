@@ -25,24 +25,24 @@ def run_pipeline(project_path: str | Path) -> None:
     Pipeline
     --------
     1. Ingest Freddie Mac origination and performance data.
-    2. Preprocess origination data.
-    3. Preprocess performance data.
-    4. Merge into the master loan-month dataset.
-    5. Construct the 24-month serious-delinquency target.
-    6. Build the final loan-level modelling dataset.
-    7. Train Model based on Config.
-    8. Evaluate The model Performance
+    2. Build the configured modelling dataset using the selected
+       preprocessing engine.
+    3. Run data-quality reporting.
+    4. Train the configured model.
+    5. Evaluate model performance.
+
     Parameters
     ----------
     project_path:
-        Project root containing the ``config`` directory.
+        Project root containing the configuration directory.
 
     Returns
     -------
     None
-        Persists the modelling dataset and data-quality workbook to the
-        configured catalog paths.
+        Persists modelling datasets, reports, model artifacts,
+        and evaluation results to the configured catalog paths.
     """
+
     project_root = Path(project_path)
     config = read_config(project_root)
     logging_config = config["parameters"].get("logging", {})
