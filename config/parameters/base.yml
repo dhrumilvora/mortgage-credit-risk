@@ -95,7 +95,7 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: false
+    skip: true
 
     version: test_unbalanced_quarterly
 
@@ -146,7 +146,7 @@ parameters:
       random_state: 42
 
     random_forest:
-      n_estimators: 5
+      n_estimators: 300
       max_depth: 8
       min_samples_split: 10
       min_samples_leaf: 5
@@ -193,7 +193,7 @@ parameters:
   # ============================================================
 
   evaluation:
-    skip: true
+    skip: false
 
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run

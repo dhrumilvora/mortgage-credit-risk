@@ -1,10 +1,13 @@
 from __future__ import annotations
+
+import logging
+
 import numpy as np
 import pandas as pd
-import logging
 from scipy.special import expit, logit
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_curve, f1_score, precision_score, recall_score
+from sklearn.metrics import f1_score, precision_score, recall_score, roc_curve
+
 from credit_risk.evaluations.metrics import (
     calculate_confusion_matrix,
     calculate_ds_metrics,
@@ -21,26 +24,166 @@ logger = logging.getLogger(__name__)
 
 
 def generate_predictions(
-    model, preprocessor, X, threshold: float = 0.5
+    model,
+    preprocessor,
+    X,
+    threshold: float = 0.5,
+    engine: str = "pandas",
+    config: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    if X.shape[0] == 0:
-        raise ValueError("Prediction feature matrix is empty.")
+    """
+    Generate binary predictions and positive-class probabilities.
+
+    Pandas:
+        Uses sklearn preprocessor + model.
+
+    PySpark:
+        Uses fitted Spark PipelineModel + Spark ML model and collects
+        only prediction/probability columns back to Pandas.
+    """
+
     if not 0 <= threshold <= 1:
         raise ValueError(
             f"Prediction threshold must be between 0 and 1, got {threshold}."
         )
-    X_transformed = preprocessor.transform(X)
 
-    y_proba = np.asarray(model.predict_proba(X_transformed)[:, 1])
+    if engine == "pandas":
+        return _generate_predictions_pandas(
+            model=model,
+            preprocessor=preprocessor,
+            X=X,
+            threshold=threshold,
+        )
+
+    if engine == "pyspark":
+        return _generate_predictions_pyspark(
+            model=model,
+            preprocessor=preprocessor,
+            X=X,
+            threshold=threshold,
+            config=config,
+        )
+
+    raise ValueError(f"Unsupported evaluation engine: {engine}")
+
+
+def _generate_predictions_pandas(
+    model,
+    preprocessor,
+    X: pd.DataFrame,
+    threshold: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Generate predictions using sklearn/Pandas."""
+
+    if X.empty:
+        raise ValueError("Prediction feature matrix is empty.")
+
+    X_transformed = preprocessor.transform(
+        X,
+    )
+
+    y_proba = np.asarray(
+        model.predict_proba(
+            X_transformed,
+        )[:, 1]
+    )
+
     y_pred = (y_proba >= threshold).astype(int)
 
-    if y_pred.shape[0] != X.shape[0]:
+    _validate_predictions(
+        n_rows=len(X),
+        y_pred=y_pred,
+        y_proba=y_proba,
+    )
+
+    logger.info(
+        "Pandas predictions generated: rows=%s",
+        f"{len(X):,}",
+    )
+
+    return y_pred, y_proba
+
+
+def _generate_predictions_pyspark(
+    model,
+    preprocessor,
+    X,
+    threshold: float,
+    config: dict | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Generate predictions using Spark ML."""
+
+    if config is None:
+        raise ValueError("Configuration is required for PySpark evaluation.")
+
+    from pyspark.sql import functions as F
+
+    if X.limit(1).count() == 0:
+        raise ValueError("Prediction feature matrix is empty.")
+
+    # The fitted Spark preprocessing PipelineModel owns the
+    # preprocessing logic. No fitting occurs during evaluation.
+    transformed = preprocessor.transform(
+        X,
+    )
+
+    predictions = model.transform(
+        transformed,
+    )
+
+    predictions = predictions.withColumn(
+        "__y_proba",
+        F.col("probability")[1],
+    )
+
+    predictions = predictions.withColumn(
+        "__y_pred",
+        (F.col("__y_proba") >= F.lit(threshold)).cast("int"),
+    )
+
+    result = predictions.select(
+        "__y_pred",
+        "__y_proba",
+    ).toPandas()
+
+    if result.empty:
+        raise ValueError("Spark prediction result is empty.")
+
+    y_pred = result["__y_pred"].to_numpy(
+        dtype="int8",
+    )
+
+    y_proba = result["__y_proba"].to_numpy(
+        dtype="float64",
+    )
+
+    _validate_predictions(
+        n_rows=len(result),
+        y_pred=y_pred,
+        y_proba=y_proba,
+    )
+
+    logger.info(
+        "PySpark predictions generated: rows=%s",
+        f"{len(result):,}",
+    )
+
+    return y_pred, y_proba
+
+
+def _validate_predictions(
+    n_rows: int,
+    y_pred: np.ndarray,
+    y_proba: np.ndarray,
+) -> None:
+
+    if y_pred.shape[0] != n_rows:
         raise ValueError(
             "Predictions contain a different number of rows "
             "than the input feature matrix."
         )
 
-    if y_proba.shape[0] != X.shape[0]:
+    if y_proba.shape[0] != n_rows:
         raise ValueError(
             "Predicted probabilities contain a different number "
             "of rows than the input feature matrix."
@@ -52,13 +195,6 @@ def generate_predictions(
     if ((y_proba < 0) | (y_proba > 1)).any():
         raise ValueError("Predicted probabilities must be between 0 and 1.")
 
-    logger.info(
-        "Predictions generated: rows=%s",
-        f"{X.shape[0]:,}",
-    )
-
-    return y_pred, y_proba
-
 
 def evaluate_dataset(
     y_true,
@@ -67,27 +203,7 @@ def evaluate_dataset(
     n_deciles: int,
     calibration_bins: list[list[float]],
 ) -> dict:
-    """
-    Run the complete evaluation suite for a single dataset.
-
-    Parameters
-    ----------
-    y_true
-        Actual binary target values.
-    y_pred
-        Predicted binary class labels.
-    y_proba
-        Predicted probability of the positive class.
-    n_deciles
-        Number of risk deciles.
-    calibration_bins
-        Fixed probability bins used for calibration.
-
-    Returns
-    -------
-    dict
-        Complete evaluation results.
-    """
+    """Run the complete evaluation suite for a single dataset."""
 
     logger.info(
         "Starting dataset evaluation: rows=%s",
@@ -127,7 +243,10 @@ def evaluate_dataset(
         bins=calibration_bins,
     )
 
-    calibration_summary = calculate_calibration_summary(y_true=y_true, y_proba=y_proba)
+    calibration_summary = calculate_calibration_summary(
+        y_true=y_true,
+        y_proba=y_proba,
+    )
 
     roc_curve_data = calculate_roc_curve_data(
         y_true=y_true,
@@ -163,6 +282,7 @@ def calculate_roc_curve_data(
     y_true,
     y_proba,
 ) -> dict:
+
     fpr, tpr, thresholds = roc_curve(
         y_true,
         y_proba,
@@ -193,6 +313,7 @@ def calculate_ks_curve_data(
     ).reset_index(drop=True)
 
     total_bad = (data["y_true"] == 1).sum()
+
     total_good = (data["y_true"] == 0).sum()
 
     if total_bad == 0 or total_good == 0:
@@ -221,14 +342,13 @@ def calculate_top_k_metrics(
     y_pred: np.ndarray,
     top_fractions: list[float] | None = None,
 ) -> pd.DataFrame:
-    """
-    Calculate event capture and precision at the top-risk portion
-    of the population.
 
-    Rows are ranked from highest predicted risk to lowest.
-    """
     if top_fractions is None:
-        top_fractions = [0.05, 0.10, 0.20]
+        top_fractions = [
+            0.05,
+            0.10,
+            0.20,
+        ]
 
     evaluation_df = (
         pd.DataFrame(
@@ -245,11 +365,13 @@ def calculate_top_k_metrics(
     )
 
     total_events = evaluation_df["actual"].sum()
+
     total_population = len(evaluation_df)
 
     results = []
 
     for fraction in top_fractions:
+
         top_n = max(
             1,
             int(np.ceil(total_population * fraction)),
@@ -263,12 +385,12 @@ def calculate_top_k_metrics(
             {
                 "top_fraction": fraction,
                 "population": top_n,
-                "population_share": top_n / total_population,
+                "population_share": (top_n / total_population),
                 "events_captured": int(events_captured),
                 "event_capture_rate": (
                     events_captured / total_events if total_events > 0 else np.nan
                 ),
-                "precision": top_population["actual"].mean(),
+                "precision": (top_population["actual"].mean()),
                 "average_predicted_pd": (top_population["predicted_pd"].mean()),
                 "lift": (
                     top_population["actual"].mean() / evaluation_df["actual"].mean()
@@ -285,13 +407,7 @@ def fit_calibration(
     y_true: pd.Series,
     y_proba: np.ndarray,
 ) -> tuple[float, float]:
-    """
-    Fit logistic calibration on a validation dataset.
 
-    Returns:
-        calibration_intercept
-        calibration_slope
-    """
     y_true = np.asarray(y_true)
     y_proba = np.asarray(y_proba)
 
@@ -306,7 +422,6 @@ def fit_calibration(
     if np.unique(y_true).size < 2:
         raise ValueError("Calibration target must contain at least two classes.")
 
-    # Keep probabilities strictly inside (0, 1) before logit.
     eps = np.finfo(float).eps
 
     clipped_proba = np.clip(
@@ -340,9 +455,7 @@ def apply_calibration(
     intercept: float,
     slope: float,
 ) -> np.ndarray:
-    """
-    Apply a fitted logistic calibration mapping.
-    """
+
     eps = np.finfo(float).eps
 
     clipped_proba = np.clip(
@@ -363,8 +476,11 @@ def apply_calibration(
 
 
 def evaluate_thresholds(
-    y_true: pd.Series, y_proba: pd.Series, config: dict
+    y_true: pd.Series,
+    y_proba: pd.Series,
+    config: dict,
 ) -> pd.DataFrame:
+
     threshold_config = config["parameters"]["evaluation"]["threshold_selection"]
 
     if not threshold_config["enabled"]:
@@ -377,13 +493,8 @@ def evaluate_thresholds(
             "evaluation.threshold_selection.candidate_thresholds " "cannot be empty."
         )
 
-    y_true_array = np.asarray(
-        y_true,
-    )
-
-    y_proba_array = np.asarray(
-        y_proba,
-    )
+    y_true_array = np.asarray(y_true)
+    y_proba_array = np.asarray(y_proba)
 
     if y_true_array.ndim != 1:
         raise ValueError("y_true must be one-dimensional.")
@@ -473,10 +584,4 @@ def evaluate_thresholds(
             }
         )
 
-    return (
-        pd.DataFrame(results)
-        .sort_values(
-            "threshold",
-        )
-        .reset_index(drop=True)
-    )
+    return pd.DataFrame(results).sort_values("threshold").reset_index(drop=True)

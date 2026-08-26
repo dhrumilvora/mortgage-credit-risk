@@ -64,7 +64,7 @@ def run_pipeline(project_path: str | Path) -> None:
     build_modelling_dataset(config, spark)
     run_reporting_pipeline(config)
     run_modelling_pipeline(config, spark)
-    run_evaluation_pipeline(config)
+    run_evaluation_pipeline(config, spark)
     logger.info(
         "━━ Pipeline completed ━━ duration_seconds=%.2f", perf_counter() - start
     )
