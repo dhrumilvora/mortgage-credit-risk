@@ -19,7 +19,7 @@ def train_xgboost_spark(
 
     modelling_config = config["parameters"]["modelling"]
     xgb_config = modelling_config["xgboost"]
-
+    training_df = training_df.repartition(xgb_config["n_jobs"])
     # --------------------------------------------------------------
     # Validate training population
     # --------------------------------------------------------------
@@ -61,7 +61,6 @@ def train_xgboost_spark(
         min_child_weight=xgb_config["min_child_weight"],
         reg_alpha=xgb_config["reg_alpha"],
         reg_lambda=xgb_config["reg_lambda"],
-        objective=xgb_config["objective"],
         eval_metric=xgb_config["eval_metric"],
         num_workers=xgb_config["n_jobs"],
         scale_pos_weight=xgb_config["scale_pos_weight"],

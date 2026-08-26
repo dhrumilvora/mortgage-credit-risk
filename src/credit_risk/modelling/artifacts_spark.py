@@ -291,10 +291,10 @@ def load_spark_model_artifacts(
     elif model_type == "xgboost":
 
         from xgboost.spark import (
-            SparkXGBClassificationModel,
+            SparkXGBClassifierModel,
         )
 
-        model_loader = SparkXGBClassificationModel
+        model_loader = SparkXGBClassifierModel
 
     elif model_type == "lightgbm":
 

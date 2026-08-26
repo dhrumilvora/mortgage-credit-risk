@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from pyspark.sql import SparkSession
+import os, sys
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,10 @@ def create_spark_session(
     """
 
     spark_config = config["parameters"]["spark"]
+    python_executable = sys.executable
 
+    os.environ["PYSPARK_PYTHON"] = python_executable
+    os.environ["PYSPARK_DRIVER_PYTHON"] = python_executable
     master = spark_config.get(
         "master",
         "local[*]",
@@ -72,6 +76,22 @@ def create_spark_session(
         )
         .config(
             "spark.sql.adaptive.skewJoin.enabled",
+            "true",
+        )
+        .config(
+            "spark.pyspark.python",
+            python_executable,
+        )
+        .config(
+            "spark.pyspark.driver.python",
+            python_executable,
+        )
+        .config(
+            "spark.sql.execution.pyspark.udf.faulthandler.enabled",
+            "true",
+        )
+        .config(
+            "spark.python.worker.faulthandler.enabled",
             "true",
         )
         .getOrCreate()

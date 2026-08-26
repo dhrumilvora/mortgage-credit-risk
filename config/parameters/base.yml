@@ -10,9 +10,9 @@ parameters:
   modelling_approach: "behavioral" # origination / behavioral
   engine: "pyspark" # pyspark / pandas
   spark:
-    master: local[*]
+    master: local[16]
     driver_memory: 12g
-    shuffle_partitions: 32
+    shuffle_partitions: 16
 
   # ============================================================
   # LOGGING
@@ -128,7 +128,7 @@ parameters:
     # Model algorithm
     # ----------------------------------------------------------
 
-    algorithm: random_forest
+    algorithm: xgboost
 
     lightgbm:
       n_estimators: 300
@@ -167,7 +167,7 @@ parameters:
       reg_lambda: 1
       objective: "binary:logistic"
       eval_metric: logloss
-      n_jobs: -1
+      n_jobs: 4
       scale_pos_weight: 1.0
       class_weight: balanced
 
@@ -201,7 +201,7 @@ parameters:
 
     model:
       version: test_unbalanced_quarterly
-      type: random_forest
+      type: xgboost
 
     threshold_selection:
       enabled: true
@@ -232,7 +232,7 @@ parameters:
       validation: true
       oot: true
     shap:
-      enabled: false
+      enabled: true
     # ----------------------------------------------------------
     # Classification threshold
     # ----------------------------------------------------------
