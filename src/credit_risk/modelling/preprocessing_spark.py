@@ -2,100 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from pyspark import keyword_only
-from pyspark.ml import Pipeline, Transformer
+from pyspark.ml import Pipeline
 from pyspark.ml.feature import (
     Imputer,
     OneHotEncoder,
     StringIndexer,
     VectorAssembler,
 )
-from pyspark.ml.param.shared import Param, Params, TypeConverters
 from pyspark.ml.pipeline import PipelineModel
-from pyspark.ml.util import DefaultParamsReadable, DefaultParamsWritable
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
-
-
-class CategoricalNullHandler(
-    Transformer,
-    DefaultParamsReadable,
-    DefaultParamsWritable,
-):
-    """
-    Spark ML Transformer that replaces null categorical values with
-    the configured 'Unknown' value.
-
-    This transformer contains no learned state and is therefore fully
-    reproducible when persisted as part of a Spark PipelineModel.
-    """
-
-    columns = Param(
-        Params._dummy(),
-        "columns",
-        "Categorical columns to clean.",
-        typeConverter=TypeConverters.toList,
-    )
-
-    unknown_value = Param(
-        Params._dummy(),
-        "unknown_value",
-        "Replacement value for null categorical values.",
-        typeConverter=TypeConverters.toString,
-    )
-
-    @keyword_only
-    def __init__(
-        self,
-        *,
-        columns: list[str] | None = None,
-        unknown_value: str = "Unknown",
-    ) -> None:
-        super().__init__()
-
-        self._setDefault(
-            unknown_value="Unknown",
-        )
-
-        kwargs = self._input_kwargs
-
-        self._set(
-            **kwargs,
-        )
-
-    def _transform(
-        self,
-        dataset: DataFrame,
-    ) -> DataFrame:
-        columns = self.getOrDefault(
-            self.columns,
-        )
-
-        unknown_value = self.getOrDefault(
-            self.unknown_value,
-        )
-
-        result = dataset
-
-        for column in columns:
-            result = result.withColumn(
-                column,
-                F.coalesce(
-                    F.col(column).cast("string"),
-                    F.lit(unknown_value),
-                ),
-            )
-
-        return result
 
 
 def split_features_target_spark(
     df: DataFrame,
     config: dict,
 ) -> tuple[DataFrame, DataFrame]:
-    """Separate baseline predictors from the modelling target."""
+    """Separate modelling predictors and target."""
 
     model_features = (
         config["parameters"]["modelling"]["features"]["numerical_features"]
@@ -106,9 +29,9 @@ def split_features_target_spark(
     target = config["parameters"]["target"]["name"]
     approach = config["parameters"]["modelling_approach"]
 
-    # ------------------------------------------------------------------
-    # Determine the natural modelling grain.
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
+    # Determine natural modelling grain.
+    # --------------------------------------------------------------
 
     if approach == "origination":
 
@@ -126,9 +49,9 @@ def split_features_target_spark(
     else:
         raise ValueError(f"Unsupported modelling approach: {approach}")
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
     # Validate required columns.
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
 
     required_columns = grain_columns + model_features + [target]
 
@@ -137,27 +60,27 @@ def split_features_target_spark(
     if missing_columns:
         raise ValueError("Missing modelling columns: " + ", ".join(missing_columns))
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
     # Validate target.
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
 
     if df.filter(F.col(target).isNull()).limit(1).count() > 0:
         raise ValueError(f"Target column contains missing values: {target}")
 
-    # ------------------------------------------------------------------
-    # X contains the natural grain columns so that the transformed
-    # feature population can later be safely joined to y.
+    # --------------------------------------------------------------
+    # Select X.
     #
-    # If a grain column is also a modelling feature, keep it only once.
-    # ------------------------------------------------------------------
+    # A grain column may also be a modelling feature.
+    # dict.fromkeys() preserves order while removing duplicates.
+    # --------------------------------------------------------------
 
     X_columns = list(dict.fromkeys(grain_columns + model_features))
 
     X = df.select(*X_columns)
 
-    # ------------------------------------------------------------------
-    # y contains the same natural grain columns + target.
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
+    # Select y.
+    # --------------------------------------------------------------
 
     y_columns = list(dict.fromkeys(grain_columns + [target]))
 
@@ -166,19 +89,51 @@ def split_features_target_spark(
     return X, y
 
 
+def prepare_features_spark(
+    df: DataFrame,
+    config: dict,
+) -> DataFrame:
+    """
+    Apply deterministic feature preparation before Spark ML.
+
+    Categorical null values are replaced with 'Unknown', matching
+    the existing Pandas preprocessing behavior.
+
+    This operation contains no learned state and is therefore not
+    part of the persisted PipelineModel.
+    """
+
+    categorical_features = config["parameters"]["modelling"]["features"][
+        "categorical_features"
+    ]
+
+    result = df
+
+    for column in categorical_features:
+
+        result = result.withColumn(
+            column,
+            F.coalesce(
+                F.col(column).cast("string"),
+                F.lit("Unknown"),
+            ),
+        )
+
+    return result
+
+
 def build_preprocessor_spark(
     config: dict,
 ) -> Pipeline:
     """
-    Build the complete, self-contained Spark preprocessing pipeline.
+    Build the Spark preprocessing pipeline.
 
     Numerical features:
         median imputation.
 
     Categorical features:
-        null -> "Unknown"
-        -> StringIndexer
-        -> OneHotEncoder
+        StringIndexer
+        OneHotEncoder
 
     Engineered features:
         passthrough.
@@ -186,7 +141,8 @@ def build_preprocessor_spark(
     Final output:
         features
 
-    The returned Pipeline is unfitted.
+    All stages are native Spark ML stages so that the fitted
+    PipelineModel can be persisted and reloaded reliably.
     """
 
     features_config = config["parameters"]["modelling"]["features"]
@@ -197,26 +153,10 @@ def build_preprocessor_spark(
 
     engineered_features = features_config["engineered_features"]
 
-    stages: list[Any] = []
+    stages = []
 
     # --------------------------------------------------------------
-    # Categorical null handling
-    #
-    # This is deliberately a Pipeline stage so it becomes part of
-    # the persisted PipelineModel.
-    # --------------------------------------------------------------
-
-    if categorical_features:
-
-        stages.append(
-            CategoricalNullHandler(
-                columns=categorical_features,
-                unknown_value="Unknown",
-            )
-        )
-
-    # --------------------------------------------------------------
-    # Numerical median imputation
+    # Numerical median imputation.
     # --------------------------------------------------------------
 
     numerical_output_columns = []
@@ -236,10 +176,10 @@ def build_preprocessor_spark(
         )
 
     # --------------------------------------------------------------
-    # Categorical indexing
+    # Categorical indexing.
     #
-    # handleInvalid="keep" is the Spark equivalent of allowing
-    # unseen categories during validation/OOT/scoring.
+    # handleInvalid="keep" ensures unseen categories in validation
+    # and OOT do not cause transformation failures.
     # --------------------------------------------------------------
 
     indexed_columns = []
@@ -256,12 +196,10 @@ def build_preprocessor_spark(
             )
         )
 
-        indexed_columns.append(
-            indexed_column,
-        )
+        indexed_columns.append(indexed_column)
 
     # --------------------------------------------------------------
-    # One-hot encoding
+    # One-hot encoding.
     # --------------------------------------------------------------
 
     encoded_columns = []
@@ -279,7 +217,7 @@ def build_preprocessor_spark(
         )
 
     # --------------------------------------------------------------
-    # Assemble final feature vector
+    # Assemble final feature vector.
     # --------------------------------------------------------------
 
     assembler_inputs = numerical_output_columns + encoded_columns + engineered_features
@@ -287,8 +225,8 @@ def build_preprocessor_spark(
     if not assembler_inputs:
         raise ValueError(
             "No modelling features configured. "
-            "At least one numerical, categorical, or engineered "
-            "feature is required."
+            "At least one numerical, categorical, or "
+            "engineered feature is required."
         )
 
     stages.append(
@@ -309,31 +247,40 @@ def fit_preprocessor_spark(
     config: dict,
 ) -> PipelineModel:
     """
-    Fit the complete Spark preprocessing pipeline on training data.
+    Prepare and fit the Spark preprocessing pipeline.
 
     Returns the fitted PipelineModel that should be persisted.
     """
+
+    X_train_prepared = prepare_features_spark(
+        X_train,
+        config,
+    )
 
     preprocessor = build_preprocessor_spark(
         config,
     )
 
     return preprocessor.fit(
-        X_train,
+        X_train_prepared,
     )
 
 
 def transform_with_preprocessor_spark(
     X: DataFrame,
     preprocessor_model: PipelineModel,
+    config: dict,
 ) -> DataFrame:
     """
-    Transform data using a previously fitted PipelineModel.
-
-    No preprocessing configuration or helper transformation is
-    required at inference time.
+    Prepare and transform data using a previously fitted
+    Spark preprocessing PipelineModel.
     """
 
-    return preprocessor_model.transform(
+    X_prepared = prepare_features_spark(
         X,
+        config,
+    )
+
+    return preprocessor_model.transform(
+        X_prepared,
     )

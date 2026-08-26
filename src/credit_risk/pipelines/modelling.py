@@ -169,8 +169,7 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
         config,
     )
     X_train_transformed = transform_with_preprocessor_spark(
-        X_train,
-        preprocessor_model,
+        X_train, preprocessor_model, config
     )
 
     X_train_transformed = X_train_transformed.cache()

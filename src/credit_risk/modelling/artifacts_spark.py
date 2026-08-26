@@ -14,11 +14,6 @@ from credit_risk.utils.config import create_path
 logger = logging.getLogger(__name__)
 
 
-# ------------------------------------------------------------------
-# Spark artifact persistence
-# ------------------------------------------------------------------
-
-
 def _save_spark_artifact(
     artifact: Any,
     path: str | Path,
@@ -42,7 +37,7 @@ def _load_spark_artifact(
     loader,
     path: str | Path,
 ) -> Any:
-    """Load a Spark ML artifact using its corresponding Reader."""
+    """Load a Spark ML artifact using its corresponding reader."""
 
     start = perf_counter()
 
@@ -57,11 +52,6 @@ def _load_spark_artifact(
     )
 
     return artifact
-
-
-# ------------------------------------------------------------------
-# Metadata / configuration persistence
-# ------------------------------------------------------------------
 
 
 def _save_json(
@@ -90,30 +80,6 @@ def _save_json(
         path,
         perf_counter() - start,
     )
-
-
-def _load_json(
-    path: str | Path,
-) -> dict:
-    """Load JSON metadata."""
-
-    start = perf_counter()
-
-    path = Path(path)
-
-    with path.open(
-        mode="r",
-        encoding="utf-8",
-    ) as file:
-        artifact = json.load(file)
-
-    logger.info(
-        "JSON artifact loaded: path=%s duration_seconds=%.2f",
-        path,
-        perf_counter() - start,
-    )
-
-    return artifact
 
 
 def _save_yaml(
@@ -167,21 +133,13 @@ def _load_yaml(
     return artifact
 
 
-# ------------------------------------------------------------------
-# Save artifacts
-# ------------------------------------------------------------------
-
-
 def save_artifacts_spark(
     model,
     preprocessor: PipelineModel,
     training_metadata: dict,
     config: dict,
 ) -> None:
-    """
-    Save Spark model, fitted preprocessor, training metadata,
-    and modelling configuration.
-    """
+    """Save Spark model, preprocessor, metadata and configuration."""
 
     approach = config["parameters"]["modelling_approach"]
     modelling = config["parameters"]["modelling"]
@@ -194,10 +152,6 @@ def save_artifacts_spark(
 
     start = perf_counter()
 
-    # --------------------------------------------------------------
-    # Model path
-    # --------------------------------------------------------------
-
     model_path = create_path(
         base_path,
         catalog,
@@ -207,10 +161,6 @@ def save_artifacts_spark(
         model_type,
         must_exist=False,
     )
-
-    # --------------------------------------------------------------
-    # Preprocessor path
-    # --------------------------------------------------------------
 
     preprocessor_path = create_path(
         base_path,
@@ -222,10 +172,6 @@ def save_artifacts_spark(
         must_exist=False,
     )
 
-    # --------------------------------------------------------------
-    # Training metadata
-    # --------------------------------------------------------------
-
     training_metadata_path = create_path(
         base_path,
         catalog,
@@ -235,10 +181,6 @@ def save_artifacts_spark(
         model_type,
         must_exist=False,
     )
-
-    # --------------------------------------------------------------
-    # Training configuration
-    # --------------------------------------------------------------
 
     training_config_path = create_path(
         base_path,
@@ -251,7 +193,7 @@ def save_artifacts_spark(
     )
 
     # --------------------------------------------------------------
-    # Save Spark model
+    # Spark-native model
     # --------------------------------------------------------------
 
     _save_spark_artifact(
@@ -260,7 +202,7 @@ def save_artifacts_spark(
     )
 
     # --------------------------------------------------------------
-    # Save fitted preprocessing PipelineModel
+    # Spark-native fitted preprocessing pipeline
     # --------------------------------------------------------------
 
     _save_spark_artifact(
@@ -269,7 +211,7 @@ def save_artifacts_spark(
     )
 
     # --------------------------------------------------------------
-    # Save metadata/config
+    # Driver-side metadata/config
     # --------------------------------------------------------------
 
     _save_json(
@@ -291,17 +233,10 @@ def save_artifacts_spark(
     )
 
 
-# ------------------------------------------------------------------
-# Load model + preprocessor
-# ------------------------------------------------------------------
-
-
 def load_spark_model_artifacts(
     config: dict,
 ):
-    """
-    Load a trained Spark model and fitted preprocessing PipelineModel.
-    """
+    """Load a trained Spark model and fitted preprocessor."""
 
     approach = config["parameters"]["modelling_approach"]
     modelling = config["parameters"]["modelling"]
@@ -311,10 +246,6 @@ def load_spark_model_artifacts(
 
     catalog = config["catalog"]
     base_path = catalog["base"]
-
-    # --------------------------------------------------------------
-    # Paths
-    # --------------------------------------------------------------
 
     model_path = create_path(
         base_path,
@@ -336,22 +267,16 @@ def load_spark_model_artifacts(
         must_exist=True,
     )
 
-    # --------------------------------------------------------------
-    # Preprocessor
-    # --------------------------------------------------------------
-
     preprocessor = _load_spark_artifact(
         PipelineModel,
         preprocessor_path,
     )
 
-    # --------------------------------------------------------------
-    # Model loader
-    # --------------------------------------------------------------
-
     if model_type == "logistic_regression":
 
-        from pyspark.ml.classification import LogisticRegressionModel
+        from pyspark.ml.classification import (
+            LogisticRegressionModel,
+        )
 
         model_loader = LogisticRegressionModel
 
@@ -365,7 +290,9 @@ def load_spark_model_artifacts(
 
     elif model_type == "xgboost":
 
-        from xgboost.spark import SparkXGBClassificationModel
+        from xgboost.spark import (
+            SparkXGBClassificationModel,
+        )
 
         model_loader = SparkXGBClassificationModel
 
@@ -384,11 +311,6 @@ def load_spark_model_artifacts(
     )
 
     return model, preprocessor
-
-
-# ------------------------------------------------------------------
-# Training configuration
-# ------------------------------------------------------------------
 
 
 def load_training_config_spark(
