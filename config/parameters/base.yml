@@ -10,9 +10,9 @@ parameters:
   modelling_approach: "behavioral" # origination / behavioral
   engine: "pyspark" # pyspark / pandas
   spark:
-    master: local[4]
+    master: local[*]
     driver_memory: 12g
-    shuffle_partitions: 16
+    shuffle_partitions: 32
 
   # ============================================================
   # LOGGING
@@ -146,7 +146,7 @@ parameters:
       random_state: 42
 
     random_forest:
-      n_estimators: 300
+      n_estimators: 5
       max_depth: 8
       min_samples_split: 10
       min_samples_leaf: 5

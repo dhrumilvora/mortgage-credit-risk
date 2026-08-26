@@ -119,7 +119,7 @@ def _load_yaml(
     return artifact
 
 
-def save_artifacts(model, preprocessor, training_metadata, config: dict) -> None:
+def save_artifacts_pandas(model, preprocessor, training_metadata, config: dict) -> None:
     approach = config["parameters"]["modelling_approach"]
     start = perf_counter()
     modelling = config["parameters"]["modelling"]

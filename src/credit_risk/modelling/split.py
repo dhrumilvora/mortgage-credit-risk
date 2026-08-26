@@ -301,7 +301,7 @@ def yearly_data_split(
     return train_df, validation_df
 
 
-def split_dataset(df: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+def split_dataset_pandas(df: pd.DataFrame, config: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
     if config["parameters"]["modelling"]["train_test_split"] == "random":
         return stratified_data_split(df, config)
     elif config["parameters"]["modelling"]["train_test_split"] == "yearly":

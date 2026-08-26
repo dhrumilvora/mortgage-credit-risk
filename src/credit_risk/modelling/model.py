@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
 
 from credit_risk.modelling.models.xgboost import train_xgboost
@@ -11,11 +12,11 @@ from credit_risk.modelling.models.lightgbm import train_lightgbm
 from credit_risk.modelling.models.random_forest import train_random_forest
 
 
-def train_model(
+def train_model_pandas(
     X_train,
     y_train,
     config: dict,
-) -> XGBClassifier | LogisticRegression:
+) -> XGBClassifier | LogisticRegression | RandomForestClassifier:
 
     if X_train.shape[0] == 0:
         raise ValueError("Training feature matrix is empty.")

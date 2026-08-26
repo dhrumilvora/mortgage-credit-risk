@@ -9,6 +9,10 @@ from credit_risk.data.schemas import (
     get_column_names,
 )
 from collections.abc import Iterator
+import logging
+from pyspark.sql import DataFrame, SparkSession
+
+logger = logging.getLogger(__name__)
 
 
 def _read_pipe_delimited(
@@ -84,4 +88,20 @@ def read_origination(
         schema=ORIGINATION_SCHEMA,
         dtypes=ORIGINATION_RAW_DTYPES,
         nrows=nrows,
+    )
+
+
+def read_spark_parquet(
+    spark: SparkSession,
+    path: Path,
+) -> DataFrame:
+    """Read a Parquet dataset using Spark."""
+
+    logger.info(
+        "Spark reading parquet: %s",
+        path,
+    )
+
+    return spark.read.parquet(
+        str(path),
     )

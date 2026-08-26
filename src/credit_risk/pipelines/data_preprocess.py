@@ -7,9 +7,10 @@ from pathlib import Path
 from time import perf_counter
 
 import pandas as pd
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame
 
-from credit_risk.data.writers import write_parquet
+from credit_risk.data.writers import write_parquet, write_spark_parquet
+from credit_risk.data.readers import read_spark_parquet
 from credit_risk.features import behavioral, origination, performance
 from credit_risk.features.behavioral_spark import (
     add_calculated_loan_age_spark,
@@ -43,7 +44,6 @@ from credit_risk.features.feature_engineering import (
     apply_transformations,
     build_interaction_features,
 )
-from credit_risk.utils.spark import create_spark_session
 
 logger = logging.getLogger(__name__)
 
@@ -192,45 +192,6 @@ def build_master_dataset_spark(
         origination_features,
         on="loan_id",
         how="inner",
-    )
-
-
-# ----------------------------------------------------------------------
-# Spark helpers
-# ----------------------------------------------------------------------
-
-
-def read_spark_parquet(
-    spark: SparkSession,
-    path: Path,
-) -> DataFrame:
-    """Read a Parquet dataset using Spark."""
-
-    logger.info(
-        "Spark reading parquet: %s",
-        path,
-    )
-
-    return spark.read.parquet(
-        str(path),
-    )
-
-
-def write_spark_parquet(
-    df: DataFrame,
-    path: Path,
-) -> None:
-    """Write a Spark DataFrame as Parquet."""
-
-    logger.info(
-        "Spark writing parquet: %s",
-        path,
-    )
-
-    (
-        df.write.mode("overwrite").parquet(
-            str(path),
-        )
     )
 
 
@@ -584,9 +545,7 @@ def build_modelling_dataset_behavioral_pandas(
 # ----------------------------------------------------------------------
 
 
-def build_modelling_dataset_behavioral_pyspark(
-    config: dict,
-) -> None:
+def build_modelling_dataset_behavioral_pyspark(config: dict, spark) -> None:
     """
     Build the behavioral modelling dataset using PySpark.
 
@@ -602,10 +561,6 @@ def build_modelling_dataset_behavioral_pyspark(
             "Preprocessing skipped by configuration",
         )
         return
-
-    spark = create_spark_session(
-        config,
-    )
 
     start = perf_counter()
 
@@ -921,9 +876,7 @@ def build_modelling_dataset_behavioral_pyspark(
 # ----------------------------------------------------------------------
 
 
-def build_modelling_dataset_origination_pyspark(
-    config: dict,
-) -> None:
+def build_modelling_dataset_origination_pyspark(config: dict, spark) -> None:
     """
     Build the origination modelling dataset using PySpark.
 
@@ -939,10 +892,6 @@ def build_modelling_dataset_origination_pyspark(
             "Preprocessing skipped by configuration",
         )
         return
-
-    spark = create_spark_session(
-        config,
-    )
 
     start = perf_counter()
 
@@ -1029,9 +978,7 @@ def build_modelling_dataset_origination_pyspark(
 # ----------------------------------------------------------------------
 
 
-def build_modelling_dataset(
-    config: dict,
-) -> None:
+def build_modelling_dataset(config: dict, spark=None) -> None:
     """
     Build the modelling dataset using the configured preprocessing
     engine.
@@ -1074,15 +1021,11 @@ def build_modelling_dataset(
 
         if approach == "behavioral":
 
-            build_modelling_dataset_behavioral_pyspark(
-                config,
-            )
+            build_modelling_dataset_behavioral_pyspark(config, spark)
 
         elif approach == "origination":
 
-            build_modelling_dataset_origination_pyspark(
-                config,
-            )
+            build_modelling_dataset_origination_pyspark(config, spark)
 
         else:
 
