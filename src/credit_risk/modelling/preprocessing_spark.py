@@ -106,7 +106,10 @@ def prepare_features_spark(
     categorical_features = config["parameters"]["modelling"]["features"][
         "categorical_features"
     ]
-
+    df = df.withColumn(
+        "months_since_last_delinquency",
+        F.coalesce(F.col("months_since_last_delinquency"), F.lit(-1)),
+    )
     result = df
 
     for column in categorical_features:

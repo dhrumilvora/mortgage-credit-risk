@@ -48,7 +48,6 @@ parameters:
 
       - current_dpd_numeric
       - max_dpd_to_date
-      - ever_30dpd_to_date
       - delinquency_months_to_date
       - months_since_last_delinquency
 
