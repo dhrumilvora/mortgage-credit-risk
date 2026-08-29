@@ -860,12 +860,6 @@ def build_modelling_dataset_behavioral_pyspark(config: dict, spark) -> None:
     finally:
 
         logger.info(
-            "Stopping Spark session after preprocessing.",
-        )
-
-        spark.stop()
-
-        logger.info(
             "PySpark behavioral preprocessing duration_seconds=%.2f",
             perf_counter() - start,
         )
@@ -964,8 +958,6 @@ def build_modelling_dataset_origination_pyspark(config: dict, spark) -> None:
             )
 
     finally:
-
-        spark.stop()
 
         logger.info(
             "PySpark origination preprocessing duration_seconds=%.2f",

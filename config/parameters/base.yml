@@ -60,7 +60,7 @@ parameters:
       performance_workers: 4
 
     preprocess:
-      skip: true
+      skip: false
       # --------------------------------------------------------
       # Baseline numerical features
       # --------------------------------------------------------

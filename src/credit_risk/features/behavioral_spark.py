@@ -197,6 +197,10 @@ def build_behavioral_features_spark(
         "observation_ages",
         [],
     )
+    lookback_windows_months = behavioral_config.get(
+        "lookback_windows_months",
+        [],
+    )
 
     if not observation_ages:
         raise ValueError("parameters.behavioral.observation_ages " "cannot be empty.")
@@ -215,6 +219,19 @@ def build_behavioral_features_spark(
     observation_ages = list(dict.fromkeys(observation_ages))
 
     max_observation_age = max(observation_ages)
+    lookback_windows_months = [int(window) for window in lookback_windows_months]
+
+    invalid_windows = [window for window in lookback_windows_months if window <= 0]
+
+    if invalid_windows:
+        raise ValueError(
+            "parameters.behavioral.lookback_windows_months must "
+            "contain only positive integers: "
+            + ", ".join(str(window) for window in invalid_windows)
+        )
+
+    # Remove duplicate windows while preserving order.
+    lookback_windows_months = list(dict.fromkeys(lookback_windows_months))
 
     # ------------------------------------------------------------------
     # Validate the input contract once.
@@ -316,6 +333,45 @@ def build_behavioral_features_spark(
         ),
     )
 
+    recent_feature_expressions = []
+
+    for window_months in lookback_windows_months:
+
+        recent_window = (
+            Window.partitionBy("loan_id")
+            .orderBy(F.col("calculated_loan_age").asc())
+            .rangeBetween(
+                -(window_months - 1),
+                Window.currentRow,
+            )
+        )
+
+        recent_feature_expressions.extend(
+            [
+                F.sum(F.col("current_dpd_30_plus"))
+                .over(recent_window)
+                .cast("short")
+                .alias(f"dpd_30_count_{window_months}m"),
+                F.sum(F.col("current_dpd_60_plus"))
+                .over(recent_window)
+                .cast("short")
+                .alias(f"dpd_60_count_{window_months}m"),
+                F.max(F.col("current_dpd_numeric"))
+                .over(recent_window)
+                .alias(f"max_dpd_{window_months}m"),
+                F.sum(F.col("current_delinquency_flag"))
+                .over(recent_window)
+                .cast("short")
+                .alias(f"delinquency_months_{window_months}m"),
+            ]
+        )
+
+    if recent_feature_expressions:
+        working = working.select(
+            "*",
+            *recent_feature_expressions,
+        )
+
     # ------------------------------------------------------------------
     # One shared ordered loan window.
     #
@@ -408,11 +464,13 @@ def build_behavioral_features_spark(
 
     logger.info(
         "Spark behavioral feature plan configured: "
-        "observation_ages=%s max_observation_age=%s",
+        "observation_ages=%s "
+        "lookback_windows_months=%s "
+        "max_observation_age=%s",
         observation_ages,
+        lookback_windows_months,
         max_observation_age,
     )
-
     return behavioral_features
 
 

@@ -10,7 +10,7 @@ parameters:
     - 6
     - 12
 
-    lookback_ages:
+    lookback_windows_months:
     - 3
     - 6
 
@@ -25,7 +25,7 @@ parameters:
     features:
 
       # ----------------------------------------------------------
-      # Origination features retained for V2 baseline comparison
+      # Origination features
       # ----------------------------------------------------------
 
       numerical_features:
@@ -37,6 +37,7 @@ parameters:
       - original_dti
       - original_ltv
       - original_cltv
+
       # ----------------------------------------------------------
       # Current point-in-time state
       # ----------------------------------------------------------
@@ -48,13 +49,27 @@ parameters:
       - remaining_months_to_legal_maturity
 
       # ----------------------------------------------------------
-      # Behavioural history
+      # Current / lifetime behavioural history
       # ----------------------------------------------------------
 
       - current_dpd_numeric
       - max_dpd_to_date
       - delinquency_months_to_date
       - months_since_last_delinquency
+
+      # ----------------------------------------------------------
+      # Recent behavioural history
+      # ----------------------------------------------------------
+
+      - dpd_30_count_3m
+      - dpd_60_count_3m
+      - max_dpd_3m
+      - delinquency_months_3m
+
+      - dpd_30_count_6m
+      - dpd_60_count_6m
+      - max_dpd_6m
+      - delinquency_months_6m
 
       # ----------------------------------------------------------
       # Post-origination trajectory
@@ -65,9 +80,9 @@ parameters:
 
       categorical_features:
 
-      # ----------------------------------------------------------
+      # --------------------------------------------------------
       # Origination categorical variables
-      # ----------------------------------------------------------
+      # --------------------------------------------------------
 
       - first_time_homebuyer_flag
       - property_type
@@ -77,14 +92,6 @@ parameters:
       - super_conforming_flag
       - harp_indicator
       - property_state
-      # # ----------------------------------------------------------
-      # # Binned origination variables
-      # # ----------------------------------------------------------
-
-      # - credit_score_bins
-      # - original_ltv_bins
-      # - original_cltv_bins
-      # - original_dti_bins
 
       engineered_features:
 
