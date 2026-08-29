@@ -30,20 +30,6 @@ def _validate_required_columns(
         )
 
 
-def _empty_behavioral_result(
-    df: DataFrame,
-) -> DataFrame:
-    """
-    Return an empty behavioral DataFrame while preserving the source
-    schema and adding observation_age.
-    """
-
-    return df.limit(0).withColumn(
-        "observation_age",
-        F.lit(None).cast("int"),
-    )
-
-
 # ----------------------------------------------------------------------
 # Serious delinquency
 # ----------------------------------------------------------------------

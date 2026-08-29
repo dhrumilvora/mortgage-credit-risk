@@ -12,7 +12,7 @@ parameters:
   spark:
     master: local[16]
     driver_memory: 12g
-    shuffle_partitions: 16
+    shuffle_partitions: 256
 
   # ============================================================
   # LOGGING
@@ -95,7 +95,7 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: true
+    skip: false
 
     version: test_unbalanced_quarterly
 

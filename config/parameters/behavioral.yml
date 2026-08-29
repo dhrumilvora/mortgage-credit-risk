@@ -10,6 +10,10 @@ parameters:
     - 6
     - 12
 
+    lookback_ages:
+    - 3
+    - 6
+
     prediction_horizon_months: 12
 
   # ============================================================
@@ -29,9 +33,10 @@ parameters:
       - number_of_borrowers
       - mi_percentage
       - original_upb
-      - original_interest_rate
-      - original_loan_term
-
+      - credit_score
+      - original_dti
+      - original_ltv
+      - original_cltv
       # ----------------------------------------------------------
       # Current point-in-time state
       # ----------------------------------------------------------
@@ -55,7 +60,7 @@ parameters:
       # Post-origination trajectory
       # ----------------------------------------------------------
 
-      - upb_change_from_origination
+      # - upb_change_from_origination
       - upb_pct_change_from_origination
 
       categorical_features:

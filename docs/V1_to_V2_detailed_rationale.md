@@ -1,5 +1,7 @@
 # V1 → V2: Detailed Model Evolution Rationale
 
+> **Current implementation note (August 2026):** This document records the historical diagnosis that motivated the move away from the V1 origination-only model. V2 is implemented as a point-in-time behavioural model, not yet as the discrete-time hazard/survival model proposed below. The V2 configuration uses observation ages 6 and 12, strictly lagged performance features, and a 12-month forward serious-delinquency target. V3 is being updated separately. See [the V2 methodology](modelling-methodology.md) for the implemented design.
+
 ## 1. Executive Summary
 
 V1 was designed as a **static origination-time mortgage credit-risk model**.

@@ -46,17 +46,18 @@ def run_pipeline(project_path: str | Path) -> None:
 
     project_root = Path(project_path)
     config = read_config(project_root)
-    spark = None
-    if config["parameters"]["engine"] == "pyspark":
-        spark = create_spark_session(
-            config,
-        )
     logging_config = config["parameters"].get("logging", {})
     configure_logging(
         level=logging_config.get("level", "INFO"),
         enabled=logging_config.get("enabled", True),
         color=logging_config.get("color", True),
     )
+
+    spark = None
+    if config["parameters"]["engine"] == "pyspark":
+        spark = create_spark_session(
+            config,
+        )
 
     start = perf_counter()
     logger.info("━━ Pipeline started ━━ project=%s", project_root.resolve())

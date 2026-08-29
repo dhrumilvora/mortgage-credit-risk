@@ -7,7 +7,7 @@ from pyspark.sql import functions as F
 
 from credit_risk.features.origination import (
     CATEGORICAL_SENTINELS,
-    NUMERIC_SENTINELS,
+    NUMERIC_SENTINELS   ,
 )
 from credit_risk.features.eligibility_origination import (
     validate_baseline_features,

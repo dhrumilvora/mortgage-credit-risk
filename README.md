@@ -1,47 +1,41 @@
 # Mortgage Credit Risk Prediction
 
-A configuration-driven Python framework for building, training, and evaluating an origination-time mortgage credit-risk model from Freddie Mac Single-Family Loan-Level data.
+A configuration-driven Python framework for training and evaluating mortgage credit-risk models with Freddie Mac Single-Family Loan-Level data.
 
-The baseline model estimates the probability that a mortgage reaches 90+ days past due (DPD), or REO acquisition, during its first 24 months of observable performance history.
+This repository documentation covers **V2**, the point-in-time behavioural model. It predicts whether a loan will become seriously delinquent during the 12 months after each configured observation age. V3 is being updated separately and is not described here.
 
-## What is implemented
+## V2 model
 
-- Ingestion and schema validation for Freddie Mac origination and monthly-performance files.
-- Canonical Parquet datasets and vintage-specific loan-level modelling inputs.
-- Leakage-safe target construction: performance data defines the outcome but is not used as an origination-time predictor.
-- Sentinel-value normalization, a DTI-missingness indicator, and configurable feature engineering: credit-score, DTI, LTV, and CLTV bands plus a log-transformed original UPB.
-- Multi-vintage development and out-of-time (OOT) population loading.
-- Reproducible, stratified development/validation splitting.
-- Train-only fitted preprocessing: median imputation for numeric fields, constant imputation plus one-hot encoding for categorical fields.
-- Logistic-regression training, versioned model/preprocessor artifacts, and training metadata.
-- Validation and OOT evaluation with JSON, Excel, and chart outputs.
-- XGBoost SHAP artifacts for sampled validation and OOT populations, including transformed-feature values and global importance.
+- Behavioural approach with PySpark preprocessing.
+- Observation ages: 6 and 12 months.
+- Target: `future_90dpd_12m`.
+- Train vintages: 2015–2018; validation: 2019–2020; OOT: 2021–2022.
+- Configured algorithm: XGBoost, with SHAP enabled.
 
-## Target and cohort
+`future_90dpd_12m` is positive if numeric delinquency reaches `>= 3` (about 90+ DPD) or REO acquisition (`RA`) occurs from the month after the observation point through the following 12 months. It is a PD-like serious-delinquency outcome, not an LGD, EAD, or realised-loss model.
 
-`ever_90dpd_24m` is positive when, within the first 24 months of performance history, a loan has either:
+## Leakage boundary
 
-- a numeric delinquency status of at least `3` (approximately 90+ DPD); or
-- an `RA` (REO acquisition) status.
+Each model row is `loan_id × observation_age`. A loan requires an exact performance observation at that age, no serious delinquency through that point, and no termination at that point. Predictors may use origination data and performance history through the observation month only; later months construct the target only.
 
-To make the outcome observable, a loan must first appear at loan age 0 or 1. Loans with an unobserved early period, or an unobservable early termination other than a voluntary payoff, are excluded. A voluntary payoff (`ZBC = 01`) without prior serious delinquency is treated as a non-event.
+```text
+Origination + history through observation age  -> predictors
+Months observation age + 1 through +12         -> future target only
+```
 
-This is a serious-delinquency / credit-deterioration target, not a realized-loss model. It is related to probability of default (PD), not directly to loss given default (LGD) or exposure at default (EAD).
+An incomplete forward window is excluded unless a serious-delinquency event occurs or a voluntary payoff (`ZBC = 01`) establishes a non-event.
 
 ## Pipeline
 
 ```text
-Raw Freddie Mac data
+Raw Freddie Mac files
   -> canonical origination and performance Parquet
-  -> origination/performance preprocessing
   -> loan-month master dataset
-  -> 24-month target and vintage-specific model input
-  -> development/OOT loading and development split
-  -> fitted preprocessing and logistic-regression training
-  -> model artifacts and validation/OOT evaluation reports
+  -> behavioural features and forward target
+  -> chronological train, validation, and OOT populations
+  -> fitted preprocessing and configured model
+  -> versioned artifacts, evaluation reports, and SHAP outputs
 ```
-
-The package entry point runs every stage; each stage can be skipped through configuration:
 
 ```python
 from pathlib import Path
@@ -50,36 +44,24 @@ from credit_risk import run_pipeline
 run_pipeline(Path("."))
 ```
 
-Before a full run, configure the data locations and enabled stages in `config/catalog/base.yml` and `config/parameters/base.yml`. The current configuration skips ingestion and preprocessing while enabling modelling and same-run evaluation, so it reuses the existing model-input datasets and rebuilds modelling artifacts.
+Stage switches in `config/parameters/base.yml` control ingestion, preprocessing, reporting, modelling, and evaluation. The checked-in configuration skips ingestion and preprocessing, so compatible model-input data must already exist.
 
-## Baseline predictors
+## Features and outputs
 
-The predictor set is controlled in `parameters.modelling.features`. It includes borrower credit and capacity, leverage, mortgage structure, program, channel, and state fields, plus configured engineered features. The baseline configuration uses credit-score bands in place of raw credit score.
-
-Performance-history variables are reserved for target construction. Future loan-month models may add point-in-time behavioural features, provided they are available as of the observation date.
-
-## Outputs
-
-Configured paths are rooted at `data/` by default.
+The behavioural contract in `config/parameters/behavioral.yml` combines origination characteristics with point-in-time loan state, strictly historical delinquency measures, and UPB trajectory. The preprocessor is fitted only on training data: numeric fields use median imputation; categorical fields use `Unknown` imputation and one-hot encoding.
 
 | Output | Purpose |
 |---|---|
-| `03_processed/.../model-input.parquet` | One loan per row with origination-time features and target |
-| `04_model_split/*.parquet` | Persisted training, validation, and OOT populations |
-| `05_artifacts/<version>/<algorithm>/` | Model, fitted preprocessor, training metadata, and training configuration |
-| `05_artifacts/<version>/<algorithm>/model_evaluation/<dataset>/` | Evaluation JSON, Excel workbook, and ROC, KS, decile, and calibration charts |
-| `06_reporting/data_quality/pipeline_qc.xlsx` | Data-quality workbook |
+| `03_processed/behavioral/.../model-input.parquet` | Point-in-time model population |
+| `04_model_split/*.parquet` | Train, validation, and OOT populations |
+| `05_artifacts/<version>/<algorithm>/` | Model, preprocessor, configuration, and metadata |
+| `05_artifacts/<version>/<algorithm>/model_evaluation/<dataset>/` | Metrics, charts, threshold summary, and SHAP outputs |
 
-## Evaluation
+Evaluation includes threshold metrics, ROC-AUC, PR-AUC, KS, Brier score, log loss, deciles, calibration, and diagnostic charts. Model outputs require independent validation before any credit-decisioning use.
 
-For enabled validation and OOT datasets, the framework produces classification metrics, ROC-AUC, PR-AUC, KS, Brier score, log loss, confusion matrices, risk deciles, calibration tables, and diagnostic charts. The classification threshold, risk deciles, calibration bins, model version, and evaluation mode are all configuration-driven. When evaluating an existing artifact, its saved training feature contract is used for scoring rather than the active feature list.
+## Documentation
 
-## Project documentation
-
-- [Project flow](docs/project_flow.md) — architecture, stages, configuration, and artifacts.
-- [Modelling methodology](docs/modelling-methodology.md) — target, cohort, features, preprocessing, training, and evaluation decisions.
-- [Credit-risk reference guide](docs/credit-risk-reference-guide.md) — terminology and Freddie Mac field guidance.
-
-## Current limitations
-
-The current pipeline supports logistic regression and XGBoost. XGBoost SHAP explanations are implemented, while challenger comparison, stability analysis, probability calibration, and production monitoring remain future work. SHAP values for XGBoost are on the model's raw-margin (log-odds) scale. Data and model outputs are local project artifacts and should be independently validated before any credit decisioning use.
+- [Project flow](docs/project_flow.md)
+- [Modelling methodology](docs/modelling-methodology.md)
+- [Credit-risk reference guide](docs/credit-risk-reference-guide.md)
+- [V1 to V2 rationale](docs/V1_to_V2_detailed_rationale.md)
