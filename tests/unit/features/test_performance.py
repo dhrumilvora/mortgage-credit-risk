@@ -5,6 +5,7 @@ import pytest
 
 from credit_risk.features.eligibility_performance import (
     BASELINE_FEATURES,
+    CHALLENGER_FEATURES,
     IDENTIFIER_FIELDS,
     STATE_FIELDS,
     TERMINATION_FIELDS,
@@ -18,6 +19,7 @@ EXPECTED_COLUMNS = (
     + BASELINE_FEATURES
     + STATE_FIELDS
     + TERMINATION_FIELDS
+    + CHALLENGER_FEATURES
 )
 
 
