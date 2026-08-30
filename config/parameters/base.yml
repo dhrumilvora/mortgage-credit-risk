@@ -9,9 +9,10 @@ parameters:
 
   modelling_approach: "behavioral" # origination / behavioral
   engine: "pyspark" # pyspark / pandas
+
   spark:
     master: local[16]
-    driver_memory: 12g
+    driver_memory: 14g
     shuffle_partitions: 256
 
   # ============================================================
@@ -50,6 +51,7 @@ parameters:
     - 2020
     - 2021
     - 2022
+
     quarters: [ "Q1", "Q2", "Q3", "Q4" ]
     id_col: "loan_id"
     time: "period"
@@ -60,12 +62,22 @@ parameters:
       performance_workers: 4
 
     preprocess:
-      skip: false
-      # --------------------------------------------------------
-      # Baseline numerical features
-      # --------------------------------------------------------
+      skip: true
+
       performance_batch_size: 100000
+
       features:
+
+        # --------------------------------------------------------
+        # Origination numerical features
+        #
+        # IMPORTANT:
+        # These are the only numerical features passed to
+        # build_origination_spark(). Performance fields must NOT
+        # be placed here because they do not exist in the
+        # origination dataframe.
+        # --------------------------------------------------------
+
         numerical_features:
         - credit_score
         - original_dti
@@ -76,9 +88,9 @@ parameters:
         - original_upb
         - original_interest_rate
         - original_loan_term
-        # ------------------------------------------------------
-        # Baseline categorical features
-        # ------------------------------------------------------
+        # --------------------------------------------------------
+        # Origination categorical features
+        # --------------------------------------------------------
 
         categorical_features:
         - first_time_homebuyer_flag
@@ -95,7 +107,7 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: false
+    skip: true
 
     version: test_unbalanced_quarterly
 
@@ -112,6 +124,7 @@ parameters:
     vintages_test:
     - 2019
     - 2020
+
     vintages_oot:
     - 2021
     - 2022
@@ -206,6 +219,7 @@ parameters:
     threshold_selection:
       enabled: true
       optimisation_metric: f1
+
       candidate_thresholds:
       - 0.005
       - 0.010
@@ -231,8 +245,10 @@ parameters:
     datasets:
       validation: true
       oot: true
+
     shap:
       enabled: true
+
     # ----------------------------------------------------------
     # Classification threshold
     # ----------------------------------------------------------

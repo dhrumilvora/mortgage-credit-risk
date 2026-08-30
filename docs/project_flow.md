@@ -33,8 +33,9 @@ This document describes V2 only. Its active configuration selects `behavioral` a
 | Pandas and PySpark behavioural preprocessing | Implemented |
 | Point-in-time risk-set and target construction | Implemented |
 | Group-safe and chronological splits | Implemented |
-| Logistic regression, random forest, LightGBM, and XGBoost | Implemented |
-| Versioned artifacts, reports, and XGBoost SHAP | Implemented |
+| Logistic-regression baseline and XGBoost | Supported V2 models |
+| Versioned artifacts and reports | Implemented |
+| SHAP analysis | Pandas evaluation path only |
 | Probability calibration and stability monitoring | Future work |
 | PySpark origination-target construction | Not implemented |
 

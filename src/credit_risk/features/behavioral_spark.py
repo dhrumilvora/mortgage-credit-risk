@@ -175,54 +175,45 @@ def build_behavioral_features_spark(
     Build the complete point-in-time behavioral feature population.
 
     Output grain:
-
         loan_id x observation_age
 
-    Optimizations:
+    Adds current-state, lifetime-history, and recent-window features for:
+        - delinquency
+        - modification
+        - payment deferral
+        - borrower assistance
+        - disaster delinquency
+        - interest-rate steps
+        - UPB composition
+        - DDLPI recency
+        - UPB/rate trajectory
 
-    - all observation ages are processed in one Spark plan;
-    - no per-age count() actions;
-    - historical feature windows are calculated once;
-    - serious-delinquency history is calculated in the same window plan;
-    - rows beyond the maximum observation age are removed before
-      behavioral history windows;
-    - no union of separate observation-age DataFrames;
-    - duplicate validation is performed only once at the final
-      behavioural population level.
+    All history is calculated through and including the observation row.
     """
 
     behavioral_config = config["parameters"]["behavioral"]
 
-    observation_ages = behavioral_config.get(
-        "observation_ages",
-        [],
-    )
-    lookback_windows_months = behavioral_config.get(
-        "lookback_windows_months",
-        [],
-    )
+    observation_ages = behavioral_config.get("observation_ages", [])
+    lookback_windows_months = behavioral_config.get("lookback_windows_months", [])
 
     if not observation_ages:
-        raise ValueError("parameters.behavioral.observation_ages " "cannot be empty.")
+        raise ValueError("parameters.behavioral.observation_ages cannot be empty.")
 
     observation_ages = [int(age) for age in observation_ages]
 
     invalid_ages = [age for age in observation_ages if age < 0]
-
     if invalid_ages:
         raise ValueError(
             "parameters.behavioral.observation_ages contains "
             "negative values: " + ", ".join(str(age) for age in invalid_ages)
         )
 
-    # Remove duplicate configured ages while preserving order.
     observation_ages = list(dict.fromkeys(observation_ages))
-
     max_observation_age = max(observation_ages)
+
     lookback_windows_months = [int(window) for window in lookback_windows_months]
 
     invalid_windows = [window for window in lookback_windows_months if window <= 0]
-
     if invalid_windows:
         raise ValueError(
             "parameters.behavioral.lookback_windows_months must "
@@ -230,17 +221,17 @@ def build_behavioral_features_spark(
             + ", ".join(str(window) for window in invalid_windows)
         )
 
-    # Remove duplicate windows while preserving order.
     lookback_windows_months = list(dict.fromkeys(lookback_windows_months))
 
     # ------------------------------------------------------------------
-    # Validate the input contract once.
+    # Validate input contract once.
     # ------------------------------------------------------------------
 
     _validate_required_columns(
         master,
         {
             "loan_id",
+            "period",
             "calculated_loan_age",
             "current_loan_delinquency_status",
             "zero_balance_code",
@@ -248,22 +239,23 @@ def build_behavioral_features_spark(
             "current_actual_upb",
             "original_interest_rate",
             "current_interest_rate",
+            "current_non_interest_bearing_upb",
+            "current_interest_bearing_upb",
+            "ddlpi",
+            "modification_flag",
+            "payment_deferral_flag",
+            "borrower_assistance_plan",
+            "delinquency_due_to_disaster",
+            "interest_rate_step_indicator",
         },
         "behavioral feature construction",
     )
 
-    # ------------------------------------------------------------------
-    # Only history up to the latest required observation age is needed
-    # for point-in-time features.
-    #
-    # The full master remains available separately for target
-    # construction.
-    # ------------------------------------------------------------------
-
+    # Only history through the latest required observation age is needed.
     working = master.filter(F.col("calculated_loan_age") <= F.lit(max_observation_age))
 
     # ------------------------------------------------------------------
-    # Current numeric delinquency representation.
+    # Current-row base features.
     # ------------------------------------------------------------------
 
     current_dpd_numeric = F.expr("try_cast(current_loan_delinquency_status as double)")
@@ -274,64 +266,116 @@ def build_behavioral_features_spark(
         F.col("current_loan_delinquency_status") == F.lit("RA")
     )
 
+    # Freddie binary indicators: Y = active.
+    modification_flag = (
+        F.when(
+            F.upper(F.trim(F.col("modification_flag"))) == "Y",
+            1,
+        )
+        .otherwise(0)
+        .cast("byte")
+    )
+
+    payment_deferral_flag = (
+        F.when(
+            F.upper(F.trim(F.col("payment_deferral_flag"))) == "Y",
+            1,
+        )
+        .otherwise(0)
+        .cast("byte")
+    )
+
+    borrower_assistance_flag = (
+        F.when(
+            F.upper(F.trim(F.col("borrower_assistance_plan"))) == "Y",
+            1,
+        )
+        .otherwise(0)
+        .cast("byte")
+    )
+
+    disaster_delinquency_flag = (
+        F.when(
+            F.upper(F.trim(F.col("delinquency_due_to_disaster"))) == "Y",
+            1,
+        )
+        .otherwise(0)
+        .cast("byte")
+    )
+
+    rate_step_flag = (
+        F.when(
+            F.upper(F.trim(F.col("interest_rate_step_indicator"))) == "Y",
+            1,
+        )
+        .otherwise(0)
+        .cast("byte")
+    )
+
     # ------------------------------------------------------------------
-    # Build all current-row feature expressions together.
+    # UPB composition.
     # ------------------------------------------------------------------
+
+    non_interest_bearing_upb_pct = F.when(
+        F.col("current_actual_upb").isNull() | (F.col("current_actual_upb") == 0),
+        F.lit(None).cast("double"),
+    ).otherwise(F.col("current_non_interest_bearing_upb") / F.col("current_actual_upb"))
+
+    interest_bearing_upb_pct = F.when(
+        F.col("current_actual_upb").isNull() | (F.col("current_actual_upb") == 0),
+        F.lit(None).cast("double"),
+    ).otherwise(F.col("current_interest_bearing_upb") / F.col("current_actual_upb"))
+
+    # Monthly Period[M] values are represented by Spark as ordinals.
+    months_since_ddlpi = F.when(
+        F.col("ddlpi").isNull(),
+        F.lit(None).cast("double"),
+    ).otherwise((F.col("period") - F.col("ddlpi")).cast("double"))
+
+    upb_change = F.col("current_actual_upb") - F.col("original_upb")
 
     working = working.select(
         "*",
         current_dpd_numeric.alias("current_dpd_numeric"),
-        F.when(
-            current_dpd_numeric >= 30,
-            F.lit(1),
-        )
-        .otherwise(
-            F.lit(0),
-        )
+        F.when(current_dpd_numeric >= 30, 1)
+        .otherwise(0)
         .cast("byte")
         .alias("current_dpd_30_plus"),
-        F.when(
-            current_dpd_numeric >= 60,
-            F.lit(1),
-        )
-        .otherwise(
-            F.lit(0),
-        )
+        F.when(current_dpd_numeric >= 60, 1)
+        .otherwise(0)
         .cast("byte")
         .alias("current_dpd_60_plus"),
-        F.when(
-            current_dpd_numeric > 0,
-            F.lit(1),
-        )
-        .otherwise(
-            F.lit(0),
-        )
+        F.when(current_dpd_numeric > 0, 1)
+        .otherwise(0)
         .cast("byte")
         .alias("current_delinquency_flag"),
         F.coalesce(
             serious_flag,
             F.lit(False),
         ).alias("is_serious_delinquency"),
-        (F.col("current_actual_upb") - F.col("original_upb")).alias(
-            "upb_change_from_origination"
-        ),
+        modification_flag.alias("current_modification_flag"),
+        payment_deferral_flag.alias("current_payment_deferral_flag"),
+        borrower_assistance_flag.alias("current_borrower_assistance_flag"),
+        disaster_delinquency_flag.alias("current_disaster_delinquency_flag"),
+        rate_step_flag.alias("current_rate_step_flag"),
+        upb_change.alias("upb_change_from_origination"),
         F.when(
-            F.col("original_upb").isNull(),
+            F.col("original_upb").isNull() | (F.col("original_upb") == 0),
             F.lit(None).cast("double"),
         )
-        .when(
-            F.col("original_upb") == 0,
-            F.lit(None).cast("double"),
-        )
-        .otherwise(
-            (F.col("current_actual_upb") - F.col("original_upb"))
-            / F.col("original_upb")
-        )
+        .otherwise(upb_change / F.col("original_upb"))
         .alias("upb_pct_change_from_origination"),
         (F.col("current_interest_rate") - F.col("original_interest_rate")).alias(
             "rate_change_from_origination"
         ),
+        non_interest_bearing_upb_pct.alias("non_interest_bearing_upb_pct"),
+        interest_bearing_upb_pct.alias("interest_bearing_upb_pct"),
+        months_since_ddlpi.alias("months_since_ddlpi"),
     )
+
+    # ------------------------------------------------------------------
+    # Recent behavioral windows.
+    # ------------------------------------------------------------------
 
     recent_feature_expressions = []
 
@@ -363,6 +407,26 @@ def build_behavioral_features_spark(
                 .over(recent_window)
                 .cast("short")
                 .alias(f"delinquency_months_{window_months}m"),
+                F.sum(F.col("current_modification_flag"))
+                .over(recent_window)
+                .cast("short")
+                .alias(f"modification_count_{window_months}m"),
+                F.sum(F.col("current_payment_deferral_flag"))
+                .over(recent_window)
+                .cast("short")
+                .alias(f"payment_deferral_count_{window_months}m"),
+                F.sum(F.col("current_borrower_assistance_flag"))
+                .over(recent_window)
+                .cast("short")
+                .alias(f"borrower_assistance_count_{window_months}m"),
+                F.sum(F.col("current_disaster_delinquency_flag"))
+                .over(recent_window)
+                .cast("short")
+                .alias(f"disaster_delinquency_count_{window_months}m"),
+                F.sum(F.col("current_rate_step_flag"))
+                .over(recent_window)
+                .cast("short")
+                .alias(f"rate_step_count_{window_months}m"),
             ]
         )
 
@@ -373,9 +437,7 @@ def build_behavioral_features_spark(
         )
 
     # ------------------------------------------------------------------
-    # One shared ordered loan window.
-    #
-    # All cumulative historical features use this same window.
+    # Shared lifetime history window.
     # ------------------------------------------------------------------
 
     history_window = (
@@ -386,10 +448,6 @@ def build_behavioral_features_spark(
             Window.currentRow,
         )
     )
-
-    # ------------------------------------------------------------------
-    # Calculate all cumulative behavioral features in one window plan.
-    # ------------------------------------------------------------------
 
     working = working.select(
         "*",
@@ -408,6 +466,22 @@ def build_behavioral_features_spark(
         .over(history_window)
         .cast("short")
         .alias("delinquency_months_to_date"),
+        F.max(F.col("current_modification_flag"))
+        .over(history_window)
+        .cast("byte")
+        .alias("ever_modified"),
+        F.max(F.col("current_payment_deferral_flag"))
+        .over(history_window)
+        .cast("byte")
+        .alias("ever_payment_deferred"),
+        F.max(F.col("current_borrower_assistance_flag"))
+        .over(history_window)
+        .cast("byte")
+        .alias("ever_borrower_assistance"),
+        F.max(F.col("current_disaster_delinquency_flag"))
+        .over(history_window)
+        .cast("byte")
+        .alias("ever_disaster_delinquency"),
         F.max(
             F.when(
                 F.col("current_delinquency_flag") == 1,
@@ -422,10 +496,6 @@ def build_behavioral_features_spark(
         .alias("_has_prior_serious_delinquency"),
     )
 
-    # ------------------------------------------------------------------
-    # Convert last delinquency age to months since delinquency.
-    # ------------------------------------------------------------------
-
     working = working.withColumn(
         "months_since_last_delinquency",
         F.when(
@@ -435,11 +505,7 @@ def build_behavioral_features_spark(
     )
 
     # ------------------------------------------------------------------
-    # Restrict to the configured observation ages in ONE filter.
-    #
-    # No per-age loop.
-    # No per-age Spark action.
-    # No union.
+    # Final point-in-time population.
     # ------------------------------------------------------------------
 
     behavioral_features = (
@@ -459,6 +525,11 @@ def build_behavioral_features_spark(
             "is_serious_delinquency",
             "_has_prior_serious_delinquency",
             "_last_delinquency_age",
+            "current_modification_flag",
+            "current_payment_deferral_flag",
+            "current_borrower_assistance_flag",
+            "current_disaster_delinquency_flag",
+            "current_rate_step_flag",
         )
     )
 
@@ -466,11 +537,14 @@ def build_behavioral_features_spark(
         "Spark behavioral feature plan configured: "
         "observation_ages=%s "
         "lookback_windows_months=%s "
-        "max_observation_age=%s",
+        "max_observation_age=%s "
+        "recent_feature_count=%s",
         observation_ages,
         lookback_windows_months,
         max_observation_age,
+        len(recent_feature_expressions),
     )
+
     return behavioral_features
 
 

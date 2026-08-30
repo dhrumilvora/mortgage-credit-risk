@@ -36,6 +36,18 @@ CHALLENGER_FEATURES = [
     "servicer_name",
 ]
 
+CHALLENGER_FEATURES = [
+    "modification_flag",
+    "current_non_interest_bearing_upb",
+    "current_interest_bearing_upb",
+    "interest_rate_step_indicator",
+    "payment_deferral_flag",
+    "delinquency_due_to_disaster",
+    "borrower_assistance_plan",
+    "mi_cancellation_indicator",
+    "servicer_name",
+]
+
 
 def validate_features(columns) -> None:
     """Validate fields required for baseline performance preprocessing."""
@@ -46,6 +58,7 @@ def validate_features(columns) -> None:
         + BASELINE_FEATURES
         + STATE_FIELDS
         + TERMINATION_FIELDS
+        + CHALLENGER_FEATURES
     )
 
     missing = sorted(set(required) - set(columns))

@@ -39,13 +39,13 @@ The preprocessor is fit only on training data and reused unchanged for validatio
 | Categorical | `Unknown` imputation, one-hot encoding, unseen categories ignored |
 | Engineered | Pass through |
 
-The framework supports logistic regression, random forest, LightGBM, and XGBoost. The active configuration trains XGBoost. Versioned artifacts preserve the model, preprocessor, training metadata, and exact training configuration.
+V2 supports logistic regression as its baseline and XGBoost as its nonlinear model. The active configuration trains XGBoost. Versioned artifacts preserve the model, preprocessor, training metadata, and exact training configuration.
 
 ## Evaluation and explainability
 
 Validation and OOT reports include threshold metrics, ROC-AUC, PR-AUC, KS, Brier score, log loss, confusion counts, deciles, calibration tables, and charts. Configured threshold search evaluates candidate thresholds against the selected metric.
 
-SHAP output preserves sampled transformed features, SHAP values, global importance, and metadata. XGBoost contributions are on the raw-margin (log-odds) scale, not calibrated-PD changes.
+SHAP output preserves sampled transformed features, SHAP values, global importance, and metadata when evaluation uses the Pandas engine. The current PySpark evaluation path skips SHAP. XGBoost contributions, when generated, are on the raw-margin (log-odds) scale, not calibrated-PD changes.
 
 ## Limitations
 

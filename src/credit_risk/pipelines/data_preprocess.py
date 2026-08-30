@@ -21,6 +21,7 @@ from credit_risk.features.eligibility_origination import (
 )
 from credit_risk.features.eligibility_performance import (
     BASELINE_FEATURES,
+    CHALLENGER_FEATURES,
     IDENTIFIER_FIELDS,
     STATE_FIELDS,
     TERMINATION_FIELDS,
@@ -130,6 +131,7 @@ def select_baseline_features_spark(
         + TIME_FIELDS
         + BASELINE_FEATURES
         + STATE_FIELDS
+        + CHALLENGER_FEATURES
         + TERMINATION_FIELDS
     )
 

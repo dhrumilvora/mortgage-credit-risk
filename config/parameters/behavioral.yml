@@ -11,8 +11,8 @@ parameters:
     - 12
 
     lookback_windows_months:
-    - 3
     - 6
+    - 12
 
     prediction_horizon_months: 12
 
@@ -48,6 +48,16 @@ parameters:
       - calculated_loan_age
       - remaining_months_to_legal_maturity
 
+      # Current balance composition
+      - current_non_interest_bearing_upb
+      - current_interest_bearing_upb
+      - non_interest_bearing_upb_pct
+      - interest_bearing_upb_pct
+
+      # Current delinquency / payment state
+      # - delinquent_accrued_interest
+      # - months_since_ddlpi
+
       # ----------------------------------------------------------
       # Current / lifetime behavioural history
       # ----------------------------------------------------------
@@ -56,27 +66,47 @@ parameters:
       - max_dpd_to_date
       - delinquency_months_to_date
       - months_since_last_delinquency
+      - ever_30dpd_to_date
+      - ever_60dpd_to_date
+
+      # Lifetime intervention / assistance history
+      - ever_modified
+      - ever_payment_deferred
+      - ever_borrower_assistance
+      - ever_disaster_delinquency
 
       # ----------------------------------------------------------
       # Recent behavioural history
       # ----------------------------------------------------------
 
-      - dpd_30_count_3m
-      - dpd_60_count_3m
-      - max_dpd_3m
-      - delinquency_months_3m
-
+      # 6-month lookback
       - dpd_30_count_6m
       - dpd_60_count_6m
       - max_dpd_6m
       - delinquency_months_6m
+      - modification_count_6m
+      - payment_deferral_count_6m
+      - borrower_assistance_count_6m
+      - disaster_delinquency_count_6m
+      - rate_step_count_6m
+
+      # 12-month lookback
+      - dpd_30_count_12m
+      - dpd_60_count_12m
+      - max_dpd_12m
+      - delinquency_months_12m
+      - modification_count_12m
+      - payment_deferral_count_12m
+      - borrower_assistance_count_12m
+      - disaster_delinquency_count_12m
+      - rate_step_count_12m
 
       # ----------------------------------------------------------
       # Post-origination trajectory
       # ----------------------------------------------------------
 
-      # - upb_change_from_origination
       - upb_pct_change_from_origination
+      - rate_change_from_origination
 
       categorical_features:
 
@@ -92,6 +122,17 @@ parameters:
       - super_conforming_flag
       - harp_indicator
       - property_state
+
+      # --------------------------------------------------------
+      # Performance / behavioural categorical variables
+      # --------------------------------------------------------
+
+      - modification_flag
+      - interest_rate_step_indicator
+      - payment_deferral_flag
+      - delinquency_due_to_disaster
+      - borrower_assistance_plan
+      - mi_cancellation_indicator
 
       engineered_features:
 
