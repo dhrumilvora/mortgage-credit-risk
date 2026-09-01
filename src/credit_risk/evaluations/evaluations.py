@@ -4,8 +4,7 @@ import logging
 
 import numpy as np
 import pandas as pd
-from scipy.special import expit, logit
-from sklearn.linear_model import LogisticRegression
+
 from sklearn.metrics import f1_score, precision_score, recall_score, roc_curve
 
 from credit_risk.evaluations.metrics import (
@@ -401,78 +400,6 @@ def calculate_top_k_metrics(
         )
 
     return pd.DataFrame(results)
-
-
-def fit_calibration(
-    y_true: pd.Series,
-    y_proba: np.ndarray,
-) -> tuple[float, float]:
-
-    y_true = np.asarray(y_true)
-    y_proba = np.asarray(y_proba)
-
-    if len(y_true) != len(y_proba):
-        raise ValueError(
-            "Calibration target and predictions must have the same length."
-        )
-
-    if len(y_true) == 0:
-        raise ValueError("Calibration dataset is empty.")
-
-    if np.unique(y_true).size < 2:
-        raise ValueError("Calibration target must contain at least two classes.")
-
-    eps = np.finfo(float).eps
-
-    clipped_proba = np.clip(
-        y_proba,
-        eps,
-        1.0 - eps,
-    )
-
-    logit_prediction = logit(
-        clipped_proba,
-    )
-
-    calibration_model = LogisticRegression(
-        solver="lbfgs",
-        max_iter=1000,
-    )
-
-    calibration_model.fit(
-        logit_prediction.reshape(-1, 1),
-        y_true,
-    )
-
-    return (
-        float(calibration_model.intercept_[0]),
-        float(calibration_model.coef_[0][0]),
-    )
-
-
-def apply_calibration(
-    y_proba: np.ndarray,
-    intercept: float,
-    slope: float,
-) -> np.ndarray:
-
-    eps = np.finfo(float).eps
-
-    clipped_proba = np.clip(
-        y_proba,
-        eps,
-        1.0 - eps,
-    )
-
-    logit_prediction = logit(
-        clipped_proba,
-    )
-
-    calibrated_logit = intercept + slope * logit_prediction
-
-    return expit(
-        calibrated_logit,
-    )
 
 
 def evaluate_thresholds(

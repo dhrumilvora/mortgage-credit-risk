@@ -11,8 +11,8 @@ parameters:
   engine: "pyspark" # pyspark / pandas
 
   spark:
-    master: local[16]
-    driver_memory: 14g
+    master: local[*]
+    driver_memory: 15g
     shuffle_partitions: 256
 
   # ============================================================
@@ -59,7 +59,7 @@ parameters:
     ingestion:
       skip: true
       chunksize: 1500000
-      performance_workers: 4
+      performance_workers: 8
 
     preprocess:
       skip: true
@@ -107,7 +107,7 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: true
+    skip: false
 
     version: test_unbalanced_quarterly
 
@@ -116,17 +116,16 @@ parameters:
     # ----------------------------------------------------------
 
     vintages_train:
-    - 2015
-    - 2016
-    - 2017
+    # - 2015
+    # - 2016
+    # - 2017
     - 2018
-
-    vintages_test:
     - 2019
     - 2020
 
-    vintages_oot:
+    vintages_test:
     - 2021
+    vintages_oot:
     - 2022
     # ----------------------------------------------------------
     # Validation
@@ -170,19 +169,19 @@ parameters:
       n_jobs: -1
 
     xgboost:
-      n_estimators: 300
-      max_depth: 4
-      learning_rate: 0.05
+      tree_method: "hist" # REQUIRED for PySpark 25M row training
+      n_jobs: 8 # Maps to num_workers in SparkXGBClassifier
+      num_partitions: 200 # Spark partition count for memory distribution (100–200 ideal)
+      n_estimators: 1000
+      max_depth: 7
+      learning_rate: 0.03
       subsample: 0.8
-      colsample_bytree: 0.8
-      min_child_weight: 1
-      reg_alpha: 0
-      reg_lambda: 1
-      objective: "binary:logistic"
-      eval_metric: logloss
-      n_jobs: 4
+      colsample_bytree: 0.7
+      min_child_weight: 50
+      reg_alpha: 1.0
+      reg_lambda: 5.0
+      eval_metric: "aucpr"
       scale_pos_weight: 1.0
-      class_weight: balanced
 
     logistic_regression:
       penalty: l2
@@ -210,7 +209,7 @@ parameters:
 
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run
-    mode: same_run
+    mode: existing_model
 
     model:
       version: test_unbalanced_quarterly
@@ -219,7 +218,6 @@ parameters:
     threshold_selection:
       enabled: true
       optimisation_metric: f1
-
       candidate_thresholds:
       - 0.005
       - 0.010
@@ -268,6 +266,7 @@ parameters:
     # ----------------------------------------------------------
 
     calibration:
+      method: isotonic
       bins:
       - [ 0.00, 0.01 ]
       - [ 0.01, 0.02 ]

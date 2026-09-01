@@ -9,11 +9,9 @@ import pandas as pd
 from pyspark.ml.functions import vector_to_array
 
 from credit_risk.evaluations.evaluations import (
-    apply_calibration,
     calculate_top_k_metrics,
     evaluate_dataset,
     evaluate_thresholds,
-    fit_calibration,
     generate_predictions,
 )
 from credit_risk.evaluations.reporting import (
@@ -32,6 +30,7 @@ from credit_risk.modelling.preprocessing_spark import (
     split_features_target_spark,
 )
 from credit_risk.utils.config import create_path
+from credit_risk.evaluations.calibration import apply_calibration, fit_calibration
 
 logger = logging.getLogger(__name__)
 
@@ -354,6 +353,27 @@ def _select_validation_threshold(
     )
 
 
+def _map_threshold_to_calibrated_scale(
+    raw_threshold: float,
+    calibration_model,
+    config: dict,
+) -> float:
+    """Map a decision cutoff from raw to calibrated probability space.
+
+    Threshold selection is performed on the model's raw validation
+    probabilities.  Calibration changes the probability scale, so that same
+    numeric cutoff must not be applied directly to calibrated probabilities.
+    """
+
+    calibrated_threshold = apply_calibration(
+        y_proba=np.asarray([raw_threshold], dtype=float),
+        calibration_model=calibration_model,
+        config=config,
+    )
+
+    return float(calibrated_threshold[0])
+
+
 # ---------------------------------------------------------------------
 # Model configuration
 # ---------------------------------------------------------------------
@@ -573,8 +593,7 @@ def run_evaluation_pipeline(
     oot_evaluation = None
     calibrated_oot_evaluation = None
 
-    calibration_intercept = None
-    calibration_slope = None
+    calibration_model = None
 
     selected_threshold = None
     threshold_results = None
@@ -668,19 +687,15 @@ def run_evaluation_pipeline(
         # Calibration
         # -------------------------------------------------------------
 
-        (
-            calibration_intercept,
-            calibration_slope,
-        ) = fit_calibration(
-            y_true=y_validation,
-            y_proba=y_validation_proba,
+        calibration_model = fit_calibration(
+            y_true=y_validation, y_proba=y_validation_proba, config=scoring_config
         )
 
-        logger.info(
-            "Calibration fitted on validation: " "intercept=%.6f slope=%.6f",
-            calibration_intercept,
-            calibration_slope,
-        )
+        # logger.info(
+        #     "Calibration fitted on validation: " "intercept=%.6f slope=%.6f",
+        #     calibration_model.intercept_[0],
+        #     calibration_model.coef_[0][0],
+        # )
 
         # -------------------------------------------------------------
         # SHAP
@@ -754,23 +769,27 @@ def run_evaluation_pipeline(
         # Apply validation-fitted calibration to OOT.
         # -------------------------------------------------------------
 
-        if calibration_intercept is not None and calibration_slope is not None:
+        if calibration_model is not None:
 
             y_oot_calibrated_proba = apply_calibration(
                 y_proba=y_oot_proba,
-                intercept=calibration_intercept,
-                slope=calibration_slope,
+                calibration_model=calibration_model,
+                config=scoring_config,
             )
 
-            if selected_threshold is not None:
+            raw_threshold = (
+                selected_threshold
+                if selected_threshold is not None
+                else scoring_config["parameters"]["evaluation"]["classification"][
+                    "threshold"
+                ]
+            )
 
-                calibrated_threshold = selected_threshold
-
-            else:
-
-                calibrated_threshold = scoring_config["parameters"]["evaluation"][
-                    "classification"
-                ]["threshold"]
+            calibrated_threshold = _map_threshold_to_calibrated_scale(
+                raw_threshold=raw_threshold,
+                calibration_model=calibration_model,
+                config=scoring_config,
+            )
 
             y_oot_calibrated_pred = (
                 y_oot_calibrated_proba >= calibrated_threshold
@@ -794,10 +813,12 @@ def run_evaluation_pipeline(
             ).to_dict(orient="records")
 
             calibrated_oot_evaluation["calibration_applied"] = {
-                "intercept": calibration_intercept,
-                "slope": calibration_slope,
+                "method": scoring_config["parameters"]["evaluation"][
+                    "calibration"
+                ]["method"],
+                "raw_threshold": raw_threshold,
+                "calibrated_threshold": calibrated_threshold,
             }
-
             calibrated_oot_evaluation["threshold_applied"] = calibrated_threshold
 
         # -------------------------------------------------------------

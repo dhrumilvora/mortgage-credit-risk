@@ -46,6 +46,7 @@ CHALLENGER_FEATURES = [
     "borrower_assistance_plan",
     "mi_cancellation_indicator",
     "servicer_name",
+    "delinquent_accrued_interest",
 ]
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from time import perf_counter
 
 import pandas as pd
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, functions as F
 
 from credit_risk.data.writers import write_parquet, write_spark_parquet
 from credit_risk.data.readers import read_spark_parquet
@@ -698,7 +698,6 @@ def build_modelling_dataset_behavioral_pyspark(config: dict, spark) -> None:
             del origination_df
             del origination_dates
             del performance_df
-
             # ----------------------------------------------------------
             # Build master loan-month dataset.
             # ----------------------------------------------------------
@@ -720,6 +719,13 @@ def build_modelling_dataset_behavioral_pyspark(config: dict, spark) -> None:
             master = add_calculated_loan_age_spark(
                 master,
             )
+            master.filter(F.col("calculated_loan_age").isin([6, 12])).agg(
+                F.count("*").alias("rows"),
+                F.count("ddlpi").alias("ddlpi_non_null"),
+                F.count("delinquent_accrued_interest").alias(
+                    "delinquent_accrued_interest_non_null"
+                ),
+            ).show()
 
             logger.info(
                 "Spark master transformation configured: " "vintage=%s columns=%s",

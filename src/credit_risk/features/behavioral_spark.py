@@ -185,10 +185,16 @@ def build_behavioral_features_spark(
         - disaster delinquency
         - interest-rate steps
         - UPB composition
-        - DDLPI recency
+        - DDLPI / payment recency
         - UPB/rate trajectory
 
     All history is calculated through and including the observation row.
+
+    DDLPI is treated as payment behavior:
+        months_since_last_paid_installment = period - ddlpi
+
+    Negative values are preserved because DDLPI can legitimately be
+    ahead of the current reporting period.
     """
 
     behavioral_config = config["parameters"]["behavioral"]
@@ -214,6 +220,7 @@ def build_behavioral_features_spark(
     lookback_windows_months = [int(window) for window in lookback_windows_months]
 
     invalid_windows = [window for window in lookback_windows_months if window <= 0]
+
     if invalid_windows:
         raise ValueError(
             "parameters.behavioral.lookback_windows_months must "
@@ -241,6 +248,7 @@ def build_behavioral_features_spark(
             "current_interest_rate",
             "current_non_interest_bearing_upb",
             "current_interest_bearing_upb",
+            "delinquent_accrued_interest",
             "ddlpi",
             "modification_flag",
             "payment_deferral_flag",
@@ -326,16 +334,48 @@ def build_behavioral_features_spark(
         F.lit(None).cast("double"),
     ).otherwise(F.col("current_interest_bearing_upb") / F.col("current_actual_upb"))
 
-    # Monthly Period[M] values are represented by Spark as ordinals.
-    months_since_ddlpi = F.when(
+    # ------------------------------------------------------------------
+    # DDLPI / payment behavior.
+    #
+    # period and ddlpi are Freddie Mac month ordinals.
+    #
+    # Positive value:
+    #     current period is after the last paid installment.
+    #
+    # Zero:
+    #     DDLPI is equal to the current period.
+    #
+    # Negative value:
+    #     DDLPI is ahead of the current reporting period.
+    #
+    # We intentionally preserve negative values.
+    # ------------------------------------------------------------------
+
+    months_since_last_paid_installment = F.when(
         F.col("ddlpi").isNull(),
         F.lit(None).cast("double"),
-    ).otherwise((F.col("period") - F.col("ddlpi")).cast("double"))
+    ).otherwise((F.col("period").cast("double") - F.col("ddlpi").cast("double")))
+
+    ddlpi_ahead_flag = (
+        F.when(
+            F.col("ddlpi").isNull(),
+            F.lit(None).cast("byte"),
+        )
+        .when(
+            F.col("ddlpi") > F.col("period"),
+            F.lit(1),
+        )
+        .otherwise(F.lit(0))
+        .cast("byte")
+    )
 
     upb_change = F.col("current_actual_upb") - F.col("original_upb")
 
     working = working.select(
         "*",
+        # --------------------------------------------------------------
+        # Current delinquency
+        # --------------------------------------------------------------
         current_dpd_numeric.alias("current_dpd_numeric"),
         F.when(current_dpd_numeric >= 30, 1)
         .otherwise(0)
@@ -353,11 +393,17 @@ def build_behavioral_features_spark(
             serious_flag,
             F.lit(False),
         ).alias("is_serious_delinquency"),
+        # --------------------------------------------------------------
+        # Current behavioral indicators
+        # --------------------------------------------------------------
         modification_flag.alias("current_modification_flag"),
         payment_deferral_flag.alias("current_payment_deferral_flag"),
         borrower_assistance_flag.alias("current_borrower_assistance_flag"),
         disaster_delinquency_flag.alias("current_disaster_delinquency_flag"),
         rate_step_flag.alias("current_rate_step_flag"),
+        # --------------------------------------------------------------
+        # UPB / rate trajectory
+        # --------------------------------------------------------------
         upb_change.alias("upb_change_from_origination"),
         F.when(
             F.col("original_upb").isNull() | (F.col("original_upb") == 0),
@@ -370,7 +416,11 @@ def build_behavioral_features_spark(
         ),
         non_interest_bearing_upb_pct.alias("non_interest_bearing_upb_pct"),
         interest_bearing_upb_pct.alias("interest_bearing_upb_pct"),
-        months_since_ddlpi.alias("months_since_ddlpi"),
+        # --------------------------------------------------------------
+        # DDLPI / payment behavior
+        # --------------------------------------------------------------
+        months_since_last_paid_installment.alias("months_since_last_paid_installment"),
+        ddlpi_ahead_flag.alias("ddlpi_ahead_flag"),
     )
 
     # ------------------------------------------------------------------
@@ -495,6 +545,12 @@ def build_behavioral_features_spark(
         .cast("boolean")
         .alias("_has_prior_serious_delinquency"),
     )
+
+    # ------------------------------------------------------------------
+    # Actual delinquency recency.
+    #
+    # This is deliberately separate from DDLPI.
+    # ------------------------------------------------------------------
 
     working = working.withColumn(
         "months_since_last_delinquency",

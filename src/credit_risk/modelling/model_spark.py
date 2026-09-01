@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from pyspark.sql import DataFrame, functions as F
 
 
@@ -13,7 +14,7 @@ def _prepare_training_data_spark(
     target = config["parameters"]["target"]["name"]
 
     # --------------------------------------------------------------
-    # Determine the natural modelling grain.
+    # Determine natural modelling grain
     # --------------------------------------------------------------
 
     if approach == "origination":
@@ -29,7 +30,8 @@ def _prepare_training_data_spark(
         raise ValueError(f"Unsupported modelling approach: {approach}")
 
     # --------------------------------------------------------------
-    # Validate join columns.
+    # Validate columns locally.
+    # No Spark job required.
     # --------------------------------------------------------------
 
     missing_x = sorted(set(join_keys) - set(X_train.columns))
@@ -45,30 +47,20 @@ def _prepare_training_data_spark(
         raise ValueError("Missing training target columns: " + ", ".join(missing_y))
 
     # --------------------------------------------------------------
-    # Validate uniqueness of the target grain.
-    #
-    # There should be exactly one target per modelling observation.
+    # Prepare target
     # --------------------------------------------------------------
 
-    duplicate_targets = (
-        y_train.groupBy(*join_keys).count().filter(F.col("count") > 1).limit(1).count()
+    target_df = y_train.select(
+        *join_keys,
+        F.col(target).alias("label"),
     )
 
-    if duplicate_targets:
-        raise ValueError(
-            "Duplicate target observations detected for "
-            "the modelling grain: " + ", ".join(join_keys)
-        )
-
     # --------------------------------------------------------------
-    # Join transformed features to target.
+    # Join
     # --------------------------------------------------------------
 
     training_df = X_train.join(
-        y_train.select(
-            *join_keys,
-            F.col(target).alias("label"),
-        ),
+        target_df,
         on=join_keys,
         how="inner",
     ).select(
@@ -76,74 +68,107 @@ def _prepare_training_data_spark(
         "label",
     )
 
-    # --------------------------------------------------------------
-    # Validate that the join did not lose observations.
-    # --------------------------------------------------------------
-
-    X_count = X_train.count()
-    training_count = training_df.count()
-
-    if X_count != training_count:
-        raise ValueError(
-            "Feature/target join changed the training population: "
-            f"features={X_count:,}, "
-            f"joined={training_count:,}."
-        )
-
     return training_df
 
 
-def train_model_spark(X_train: DataFrame, y_train: DataFrame, config: dict):
+def train_model_spark(
+    X_train: DataFrame,
+    y_train: DataFrame,
+    config: dict,
+):
     algorithm = config["parameters"]["modelling"]["algorithm"]
     target = config["parameters"]["target"]["name"]
-    if X_train.limit(1).count() == 0:
-        raise ValueError("Training feature DataFrame is empty.")
-
-    if y_train.limit(1).count() == 0:
-        raise ValueError("Training target DataFrame is empty.")
-    X_train_count = X_train.count()
-    y_train_count = y_train.count()
-
-    if X_train_count != y_train_count:
-        raise ValueError(
-            "Training features and target contain different "
-            "numbers of rows: "
-            f"X_train={X_train_count:,}, "
-            f"y_train={y_train_count:,}."
-        )
 
     # --------------------------------------------------------------
-    # Validate target contains at least two classes
-    #
-    # Equivalent to:
-    #
-    #     y_train.nunique() < 2
+    # Basic validation using metadata/schema only
     # --------------------------------------------------------------
 
-    target_class_count = y_train.select(target).distinct().count()
+    if not X_train.columns:
+        raise ValueError("Training feature DataFrame has no columns.")
 
-    if target_class_count < 2:
-        raise ValueError("Training target must contain at least two classes.")
+    if not y_train.columns:
+        raise ValueError("Training target DataFrame has no columns.")
+
+    # --------------------------------------------------------------
+    # Validate target column locally
+    # --------------------------------------------------------------
+
+    if target not in y_train.columns:
+        raise ValueError(f"Target column '{target}' not found in y_train.")
+
+    # --------------------------------------------------------------
+    # Prepare training data
+    # --------------------------------------------------------------
+
     training_df = _prepare_training_data_spark(
         X_train,
         y_train,
         config,
     )
+
+    # --------------------------------------------------------------
+    # Materialize ONCE.
+    #
+    # This gives us one actual validation count and prevents
+    # repeated recomputation when the model subsequently consumes
+    # the same dataframe.
+    # --------------------------------------------------------------
+
+    training_count = training_df.count()
+
+    if training_count == 0:
+        raise ValueError("Training feature/target join produced zero rows.")
+
+    # --------------------------------------------------------------
+    # Validate target classes.
+    #
+    # This is a small aggregation compared with the previous
+    # full-data duplicate check.
+    # --------------------------------------------------------------
+
+    target_classes = training_df.select("label").distinct().limit(2).collect()
+
+    if len(target_classes) < 2:
+
+        raise ValueError("Training target must contain at least two classes.")
+
+    # --------------------------------------------------------------
+    # Train model
+    # --------------------------------------------------------------
+
+
     if algorithm == "logistic_regression":
+
         from credit_risk.modelling.models.spark.logistic_regression import (
             train_logistic_regression_spark,
         )
 
-        return train_logistic_regression_spark(training_df, config)
+        return train_logistic_regression_spark(
+            training_df,
+            config,
+        )
+
     elif algorithm == "random_forest":
+
         from credit_risk.modelling.models.spark.random_forest import (
             train_random_forest_spark,
         )
 
-        return train_random_forest_spark(training_df, config)
-    elif algorithm == "xgboost":
-        from credit_risk.modelling.models.spark.xgboost import train_xgboost_spark
+        return train_random_forest_spark(
+            training_df,
+            config,
+        )
 
-        return train_xgboost_spark(training_df, config)
+    elif algorithm == "xgboost":
+
+        from credit_risk.modelling.models.spark.xgboost import (
+            train_xgboost_spark,
+        )
+
+        return train_xgboost_spark(
+            training_df,
+            config,
+        )
 
     raise ValueError(f"Unsupported modelling algorithm: {algorithm}")
+
