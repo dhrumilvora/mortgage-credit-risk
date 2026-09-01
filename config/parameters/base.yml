@@ -11,8 +11,8 @@ parameters:
   engine: "pyspark" # pyspark / pandas
 
   spark:
-    master: local[*]
-    driver_memory: 15g
+    master: local[16]
+    driver_memory: 12g
     shuffle_partitions: 256
 
   # ============================================================
@@ -107,7 +107,7 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: false
+    skip: true
 
     version: test_unbalanced_quarterly
 
@@ -218,28 +218,8 @@ parameters:
     threshold_selection:
       enabled: true
       optimisation_metric: f1
-      candidate_thresholds:
-      - 0.005
-      - 0.010
-      - 0.015
-      - 0.020
-      - 0.025
-      - 0.03
-      - 0.04
-      - 0.05
-      - 0.075
-      - 0.1
-      - 0.15
-      - 0.2
-      - 0.25
-      - 0.3
-      - 0.35
-      - 0.4
-      - 0.45
-      - 0.5
-      - 0.55
-      - 0.6
-
+      candidate_thresholds_range: [ 0.01, 0.7 ]
+      candidate_thresholds_step: 0.01
     datasets:
       validation: true
       oot: true
@@ -266,7 +246,7 @@ parameters:
     # ----------------------------------------------------------
 
     calibration:
-      method: isotonic
+      method: platt
       bins:
       - [ 0.00, 0.01 ]
       - [ 0.01, 0.02 ]

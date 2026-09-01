@@ -105,15 +105,15 @@ parameters:
       # We retain 3m and 12m windows to represent
       # short-term and longer-term behavioural history.
       #
-      # - dpd_30_count_6m
-      # - dpd_60_count_6m
-      # - max_dpd_6m
-      # - delinquency_months_6m
-      # - modification_count_6m
-      # - payment_deferral_count_6m
-      # - borrower_assistance_count_6m
-      # - disaster_delinquency_count_6m
-      # - rate_step_count_6m
+      - dpd_30_count_6m
+      - dpd_60_count_6m
+      - max_dpd_6m
+      - delinquency_months_6m
+      - modification_count_6m
+      - payment_deferral_count_6m
+      - borrower_assistance_count_6m
+      - disaster_delinquency_count_6m
+      - rate_step_count_6m
 
       # 12-month lookback
 
@@ -144,15 +144,15 @@ parameters:
       # Temporarily removed.
       # We retain 3m and 12m windows to reduce redundancy.
       #
-      # - dpd_30_count_9m
-      # - dpd_60_count_9m
-      # - max_dpd_9m
-      # - delinquency_months_9m
-      # - modification_count_9m
-      # - payment_deferral_count_9m
-      # - borrower_assistance_count_9m
-      # - disaster_delinquency_count_9m
-      # - rate_step_count_9m
+      - dpd_30_count_9m
+      - dpd_60_count_9m
+      - max_dpd_9m
+      - delinquency_months_9m
+      - modification_count_9m
+      - payment_deferral_count_9m
+      - borrower_assistance_count_9m
+      - disaster_delinquency_count_9m
+      - rate_step_count_9m
 
       # ----------------------------------------------------------
       # Post-origination trajectory

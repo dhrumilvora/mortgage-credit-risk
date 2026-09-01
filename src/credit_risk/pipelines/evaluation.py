@@ -9,7 +9,6 @@ import pandas as pd
 from pyspark.ml.functions import vector_to_array
 
 from credit_risk.evaluations.evaluations import (
-    calculate_top_k_metrics,
     evaluate_dataset,
     evaluate_thresholds,
     generate_predictions,
@@ -30,7 +29,11 @@ from credit_risk.modelling.preprocessing_spark import (
     split_features_target_spark,
 )
 from credit_risk.utils.config import create_path
-from credit_risk.evaluations.calibration import apply_calibration, fit_calibration
+from credit_risk.evaluations.calibration import (
+    apply_calibration,
+    calculate_calibration_summary,
+    fit_calibration,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -244,11 +247,6 @@ def evaluate_split(
         calibration_bins=evaluation_config["calibration"]["bins"],
     )
 
-    evaluation_results["top_k_metrics"] = calculate_top_k_metrics(
-        y_true=y,
-        y_pred=y_proba,
-    ).to_dict(orient="records")
-
     if return_predictions:
 
         return (
@@ -258,6 +256,23 @@ def evaluate_split(
         )
 
     return evaluation_results
+
+
+# ---------------------------------------------------------------------
+# Calibration metadata
+# ---------------------------------------------------------------------
+
+
+def _get_calibration_model_metadata(
+    calibration_model,
+    config: dict,
+) -> dict:
+    """Return serializable metadata for the fitted calibration model."""
+    method = config["parameters"]["evaluation"]["calibration"]["method"].strip().lower()
+    return calculate_calibration_summary(
+        calibration_model=calibration_model,
+        method=method,
+    )
 
 
 # ---------------------------------------------------------------------
@@ -351,27 +366,6 @@ def _select_validation_threshold(
         threshold_results,
         threshold_summary,
     )
-
-
-def _map_threshold_to_calibrated_scale(
-    raw_threshold: float,
-    calibration_model,
-    config: dict,
-) -> float:
-    """Map a decision cutoff from raw to calibrated probability space.
-
-    Threshold selection is performed on the model's raw validation
-    probabilities.  Calibration changes the probability scale, so that same
-    numeric cutoff must not be applied directly to calibrated probabilities.
-    """
-
-    calibrated_threshold = apply_calibration(
-        y_proba=np.asarray([raw_threshold], dtype=float),
-        calibration_model=calibration_model,
-        config=config,
-    )
-
-    return float(calibrated_threshold[0])
 
 
 # ---------------------------------------------------------------------
@@ -642,13 +636,40 @@ def run_evaluation_pipeline(
         # Threshold selection
         # -------------------------------------------------------------
 
+        # -------------------------------------------------------------
+        # Calibration
+        # -------------------------------------------------------------
+
+        calibration_model = fit_calibration(
+            y_true=y_validation,
+            y_proba=y_validation_proba,
+            config=scoring_config,
+        )
+
+        calibration_model_metadata = _get_calibration_model_metadata(
+            calibration_model=calibration_model,
+            config=scoring_config,
+        )
+        calibration_model_metadata["method"] = calibration_model_metadata[
+            "calibration_method"
+        ]
+
+        y_val_calibrated_proba = apply_calibration(
+            y_proba=y_validation_proba,
+            calibration_model=calibration_model,
+            config=scoring_config,
+        )
+
+        validation_evaluation["calibration_model"] = calibration_model_metadata
+        validation_evaluation["calibration_summary"] = calibration_model_metadata
+
         (
             selected_threshold,
             threshold_results,
             threshold_summary,
         ) = _select_validation_threshold(
             y_validation=y_validation,
-            y_validation_proba=y_validation_proba,
+            y_validation_proba=y_val_calibrated_proba,
             config=scoring_config,
         )
 
@@ -683,19 +704,10 @@ def run_evaluation_pipeline(
                 threshold_summary["population_flagged_pct"],
             )
 
-        # -------------------------------------------------------------
-        # Calibration
-        # -------------------------------------------------------------
-
-        calibration_model = fit_calibration(
-            y_true=y_validation, y_proba=y_validation_proba, config=scoring_config
+        logger.info(
+            "Calibration fitted on validation: method=%s",
+            calibration_model_metadata["method"],
         )
-
-        # logger.info(
-        #     "Calibration fitted on validation: " "intercept=%.6f slope=%.6f",
-        #     calibration_model.intercept_[0],
-        #     calibration_model.coef_[0][0],
-        # )
 
         # -------------------------------------------------------------
         # SHAP
@@ -777,23 +789,13 @@ def run_evaluation_pipeline(
                 config=scoring_config,
             )
 
-            raw_threshold = (
-                selected_threshold
-                if selected_threshold is not None
-                else scoring_config["parameters"]["evaluation"]["classification"][
-                    "threshold"
-                ]
-            )
+            raw_threshold = scoring_config["parameters"]["evaluation"][
+                "classification"
+            ]["threshold"]
 
-            calibrated_threshold = _map_threshold_to_calibrated_scale(
-                raw_threshold=raw_threshold,
-                calibration_model=calibration_model,
-                config=scoring_config,
+            y_oot_calibrated_pred = (y_oot_calibrated_proba >= raw_threshold).astype(
+                "int8"
             )
-
-            y_oot_calibrated_pred = (
-                y_oot_calibrated_proba >= calibrated_threshold
-            ).astype("int8")
 
             calibrated_oot_evaluation = evaluate_dataset(
                 y_true=y_oot,
@@ -807,19 +809,20 @@ def run_evaluation_pipeline(
                 ),
             )
 
-            calibrated_oot_evaluation["top_k_metrics"] = calculate_top_k_metrics(
-                y_true=y_oot,
-                y_pred=y_oot_calibrated_proba,
-            ).to_dict(orient="records")
-
             calibrated_oot_evaluation["calibration_applied"] = {
-                "method": scoring_config["parameters"]["evaluation"][
-                    "calibration"
-                ]["method"],
+                **calibration_model_metadata,
                 "raw_threshold": raw_threshold,
-                "calibrated_threshold": calibrated_threshold,
+                "raw_threshold": raw_threshold,
             }
-            calibrated_oot_evaluation["threshold_applied"] = calibrated_threshold
+            calibrated_oot_evaluation["calibration_summary"] = (
+                calculate_calibration_summary(
+                    calibration_model=calibration_model,
+                    method=scoring_config["parameters"]["evaluation"]["calibration"][
+                        "method"
+                    ],
+                )
+            )
+            calibrated_oot_evaluation["threshold_applied"] = raw_threshold
 
         # -------------------------------------------------------------
         # SHAP

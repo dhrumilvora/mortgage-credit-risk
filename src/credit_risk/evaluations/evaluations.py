@@ -13,10 +13,12 @@ from credit_risk.evaluations.metrics import (
     calculate_ks,
 )
 from credit_risk.evaluations.risks import (
-    calculate_calibration_metrics,
     calculate_credit_risk_metrics,
     calculate_risk_deciles,
-    calculate_calibration_summary,
+)
+from credit_risk.evaluations.calibration import (
+    calculate_calibration_metrics,
+    calculate_calibration_statistics,
 )
 
 logger = logging.getLogger(__name__)
@@ -236,17 +238,6 @@ def evaluate_dataset(
         n_deciles=n_deciles,
     )
 
-    calibration = calculate_calibration_metrics(
-        y_true=y_true,
-        y_proba=y_proba,
-        bins=calibration_bins,
-    )
-
-    calibration_summary = calculate_calibration_summary(
-        y_true=y_true,
-        y_proba=y_proba,
-    )
-
     roc_curve_data = calculate_roc_curve_data(
         y_true=y_true,
         y_proba=y_proba,
@@ -257,13 +248,31 @@ def evaluate_dataset(
         y_proba=y_proba,
     )
 
+    calibration = calculate_calibration_metrics(
+        y_true=y_true,
+        y_proba=y_proba,
+        bins=calibration_bins,
+    )
+
+    calibration_statistics = calculate_calibration_statistics(
+        y_true=y_true,
+        y_proba=y_proba,
+        calibration_metrics=calibration,
+    )
+
+    top_k_metrics = calculate_top_k_metrics(
+        y_true=pd.Series(np.asarray(y_true)),
+        y_pred=np.asarray(y_proba),
+    ).to_dict(orient="records")
+
     results = {
         "ds_metrics": ds_metrics,
         "confusion_matrix": confusion_matrix,
         "credit_risk_metrics": credit_risk_metrics,
         "risk_deciles": risk_deciles,
         "calibration": calibration,
-        "calibration_summary": calibration_summary,
+        "calibration_statistics": calibration_statistics,
+        "top_k_metrics": top_k_metrics,
         "roc_curve": roc_curve_data,
         "ks_curve": ks_curve_data,
     }
@@ -402,26 +411,149 @@ def calculate_top_k_metrics(
     return pd.DataFrame(results)
 
 
+def calculate_top_k_metrics(
+    y_true: pd.Series,
+    y_pred: np.ndarray,
+    top_fractions: list[float] | None = None,
+) -> pd.DataFrame:
+    """Calculate event capture, precision, and lift at top-risk cutoffs."""
+    if top_fractions is None:
+        top_fractions = [0.05, 0.10, 0.20]
+
+    evaluation_df = (
+        pd.DataFrame(
+            {
+                "actual": np.asarray(y_true),
+                "predicted_pd": np.asarray(y_pred),
+            }
+        )
+        .sort_values(
+            "predicted_pd",
+            ascending=False,
+        )
+        .reset_index(drop=True)
+    )
+
+    total_population = len(evaluation_df)
+    if total_population == 0:
+        raise ValueError("Top-k evaluation dataset is empty.")
+
+    total_events = evaluation_df["actual"].sum()
+    base_event_rate = evaluation_df["actual"].mean()
+    results = []
+
+    for fraction in top_fractions:
+        if not 0 < fraction <= 1:
+            raise ValueError("Top-k fractions must be strictly between 0 and 1.")
+
+        top_n = max(1, int(np.ceil(total_population * fraction)))
+        top_population = evaluation_df.iloc[:top_n]
+        events_captured = top_population["actual"].sum()
+        precision = top_population["actual"].mean()
+
+        results.append(
+            {
+                "top_fraction": fraction,
+                "population": top_n,
+                "population_share": top_n / total_population,
+                "events_captured": int(events_captured),
+                "event_capture_rate": (
+                    events_captured / total_events if total_events > 0 else np.nan
+                ),
+                "precision": precision,
+                "average_predicted_pd": top_population["predicted_pd"].mean(),
+                "lift": precision / base_event_rate if base_event_rate > 0 else np.nan,
+            }
+        )
+
+    return pd.DataFrame(results)
+
+
 def evaluate_thresholds(
     y_true: pd.Series,
     y_proba: pd.Series,
     config: dict,
 ) -> pd.DataFrame:
+    """
+    Evaluate candidate classification thresholds on predicted probabilities.
+
+    This function is agnostic to the probability source. Therefore, when
+    threshold optimisation is performed after calibration, ``y_proba`` should
+    contain the calibrated probabilities.
+
+    The function evaluates each configured threshold and returns the
+    classification trade-offs without selecting a threshold.
+
+    Metrics include:
+        - population flagged
+        - population flagged percentage
+        - confusion-matrix counts
+        - precision
+        - recall / event capture rate
+        - false-negative rate
+        - specificity
+        - false-positive rate
+        - F1
+    """
 
     threshold_config = config["parameters"]["evaluation"]["threshold_selection"]
 
     if not threshold_config["enabled"]:
         return pd.DataFrame()
 
-    thresholds = threshold_config["candidate_thresholds"]
+    thresholds_range = threshold_config["candidate_thresholds_range"]
+    step = threshold_config["candidate_thresholds_step"]
 
-    if not thresholds:
+    if len(thresholds_range) != 2:
+        raise ValueError("candidate_thresholds_range must contain exactly two values.")
+
+    lower_threshold = float(thresholds_range[0])
+    upper_threshold = float(thresholds_range[1])
+    step = float(step)
+
+    if not 0 < lower_threshold < 1:
         raise ValueError(
-            "evaluation.threshold_selection.candidate_thresholds " "cannot be empty."
+            "candidate_thresholds_range lower bound must be strictly between 0 and 1."
         )
 
+    if not 0 < upper_threshold <= 1:
+        raise ValueError(
+            "candidate_thresholds_range upper bound must be between 0 and 1."
+        )
+
+    if lower_threshold >= upper_threshold:
+        raise ValueError(
+            "candidate_thresholds_range lower bound must be less than upper bound."
+        )
+
+    if step <= 0:
+        raise ValueError("candidate_thresholds_step must be greater than zero.")
+
+    # ------------------------------------------------------------------
+    # Generate candidate thresholds
+    # ------------------------------------------------------------------
+    thresholds = np.arange(
+        lower_threshold,
+        upper_threshold,
+        step,
+        dtype=float,
+    )
+
+    # Floating-point arithmetic can produce values such as
+    # 0.20000000000000001. Round only the threshold representation;
+    # this does not change the intended candidate grid.
+    thresholds = np.round(thresholds, 12)
+
+    if thresholds.size == 0:
+        raise ValueError(
+            "evaluation.threshold_selection.candidate_thresholds cannot be empty."
+        )
+
+    # ------------------------------------------------------------------
+    # Convert inputs
+    # ------------------------------------------------------------------
     y_true_array = np.asarray(y_true)
-    y_proba_array = np.asarray(y_proba)
+    y_proba_array = np.asarray(y_proba, dtype=float)
 
     if y_true_array.ndim != 1:
         raise ValueError("y_true must be one-dimensional.")
@@ -432,29 +564,41 @@ def evaluate_thresholds(
     if len(y_true_array) != len(y_proba_array):
         raise ValueError("y_true and y_proba must contain the same number of rows.")
 
-    if np.isnan(y_proba_array).any():
-        raise ValueError("Predicted probabilities contain missing values.")
-
-    if ((y_proba_array < 0) | (y_proba_array > 1)).any():
-        raise ValueError("Predicted probabilities must lie between 0 and 1.")
+    if len(y_true_array) == 0:
+        raise ValueError("Threshold evaluation dataset is empty.")
 
     if pd.isna(y_true_array).any():
         raise ValueError("Target contains missing values.")
 
-    total_population = len(
-        y_true_array,
-    )
+    if not np.isfinite(y_proba_array).all():
+        raise ValueError("Predicted probabilities contain non-finite values.")
 
-    total_events = int(
-        y_true_array.sum(),
-    )
+    if ((y_proba_array < 0) | (y_proba_array > 1)).any():
+        raise ValueError("Predicted probabilities must lie between 0 and 1.")
 
-    if total_population == 0:
-        raise ValueError("Threshold evaluation dataset is empty.")
+    # ------------------------------------------------------------------
+    # Validate binary target
+    # ------------------------------------------------------------------
+    unique_targets = np.unique(y_true_array)
+
+    if not np.isin(unique_targets, [0, 1]).all():
+        raise ValueError("y_true must contain only binary values 0 and 1.")
+
+    total_population = len(y_true_array)
+    total_events = int(y_true_array.sum())
+    total_non_events = total_population - total_events
 
     if total_events == 0:
         raise ValueError("Threshold evaluation requires at least one positive event.")
 
+    if total_non_events == 0:
+        raise ValueError(
+            "Threshold evaluation requires at least one negative observation."
+        )
+
+    # ------------------------------------------------------------------
+    # Evaluate thresholds
+    # ------------------------------------------------------------------
     results = []
 
     for threshold in thresholds:
@@ -463,21 +607,25 @@ def evaluate_thresholds(
 
         if not 0 < threshold < 1:
             raise ValueError(
-                "Each candidate threshold must be strictly " "between 0 and 1."
+                "Each candidate threshold must be strictly between 0 and 1."
             )
 
         y_pred = (y_proba_array >= threshold).astype("int8")
 
-        population_flagged = int(
-            y_pred.sum(),
-        )
-
+        # --------------------------------------------------------------
+        # Confusion matrix
+        # --------------------------------------------------------------
         true_positive = int(((y_true_array == 1) & (y_pred == 1)).sum())
+
+        true_negative = int(((y_true_array == 0) & (y_pred == 0)).sum())
 
         false_positive = int(((y_true_array == 0) & (y_pred == 1)).sum())
 
         false_negative = int(((y_true_array == 1) & (y_pred == 0)).sum())
 
+        # --------------------------------------------------------------
+        # Classification metrics
+        # --------------------------------------------------------------
         precision = precision_score(
             y_true_array,
             y_pred,
@@ -496,17 +644,35 @@ def evaluate_thresholds(
             zero_division=0,
         )
 
+        # Recall = TP / (TP + FN)
+        # Therefore FN rate = 1 - recall.
+        false_negative_rate = false_negative / total_events
+
+        # Specificity = TN / (TN + FP)
+        specificity = true_negative / total_non_events
+
+        # FPR = FP / (FP + TN)
+        false_positive_rate = false_positive / total_non_events
+
+        population_flagged = int(y_pred.sum())
+
+        population_flagged_pct = population_flagged / total_population
+
         results.append(
             {
                 "threshold": threshold,
                 "population_flagged": population_flagged,
-                "population_flagged_pct": (population_flagged / total_population),
+                "population_flagged_pct": population_flagged_pct,
                 "true_positive": true_positive,
+                "true_negative": true_negative,
                 "false_positive": false_positive,
                 "false_negative": false_negative,
                 "precision": precision,
                 "recall": recall,
                 "event_capture_rate": recall,
+                "false_negative_rate": false_negative_rate,
+                "specificity": specificity,
+                "false_positive_rate": false_positive_rate,
                 "f1": f1,
             }
         )

@@ -121,29 +121,32 @@ def save_evaluation_json(
     serializable_evaluation = _make_json_serializable(
         evaluation,
     )
-    to_save = {}
-    if "calibration_applied" in serializable_evaluation.keys():
-        evaluation_path = evaluation_dir / "evaluation_results_calibrated.json"
-        to_save = {
-            "ds_metrics": serializable_evaluation["ds_metrics"],
-            "confusion_matrix": serializable_evaluation["confusion_matrix"],
-            "credit_risk_metrics": serializable_evaluation["credit_risk_metrics"],
-            "risk_deciles": serializable_evaluation["risk_deciles"],
-            "top_k_metrics": serializable_evaluation["top_k_metrics"],
-            "calibration": serializable_evaluation["calibration"],
-            "calibration_summary": serializable_evaluation["calibration_summary"],
-            "calibration_applied": serializable_evaluation["calibration_applied"],
-        }
-    else:
-        to_save = {
-            "ds_metrics": serializable_evaluation["ds_metrics"],
-            "confusion_matrix": serializable_evaluation["confusion_matrix"],
-            "credit_risk_metrics": serializable_evaluation["credit_risk_metrics"],
-            "risk_deciles": serializable_evaluation["risk_deciles"],
-            "top_k_metrics": serializable_evaluation["top_k_metrics"],
-            "calibration": serializable_evaluation["calibration"],
-            "calibration_summary": serializable_evaluation["calibration_summary"],
-        }
+
+    calibrated = "calibration_applied" in serializable_evaluation
+    evaluation_path = (
+        evaluation_dir / "evaluation_results_calibrated.json"
+        if calibrated
+        else evaluation_dir / "evaluation_results.json"
+    )
+
+    to_save = {
+        "ds_metrics": serializable_evaluation.get("ds_metrics"),
+        "confusion_matrix": serializable_evaluation.get("confusion_matrix"),
+        "credit_risk_metrics": serializable_evaluation.get("credit_risk_metrics"),
+        "risk_deciles": serializable_evaluation.get("risk_deciles"),
+        "top_k_metrics": serializable_evaluation.get("top_k_metrics"),
+        "calibration": serializable_evaluation.get("calibration"),
+        "calibration_statistics": serializable_evaluation.get("calibration_statistics"),
+        "calibration_summary": serializable_evaluation.get("calibration_summary"),
+        "calibration_applied": serializable_evaluation.get("calibration_applied"),
+        "threshold_selection": serializable_evaluation.get("threshold_selection"),
+        "threshold_applied": serializable_evaluation.get("threshold_applied"),
+        # "roc_curve": serializable_evaluation.get("roc_curve"),
+        # "ks_curve": serializable_evaluation.get("ks_curve"),
+    }
+
+    # Remove absent optional fields while retaining explicit null-free JSON.
+    to_save = {key: value for key, value in to_save.items() if value is not None}
 
     with open(
         evaluation_path,
@@ -214,13 +217,13 @@ def save_evaluation_excel(
     _write_metrics_sheet(
         workbook,
         "Classification Metrics",
-        evaluation.get("classification_metrics"),
+        evaluation.get("ds_metrics"),
     )
 
     _write_metrics_sheet(
         workbook,
         "Risk Metrics",
-        evaluation.get("risk_metrics"),
+        evaluation.get("credit_risk_metrics"),
     )
 
     _write_deciles_sheet(
@@ -232,9 +235,19 @@ def save_evaluation_excel(
         workbook,
         evaluation.get("calibration"),
     )
+    _write_metrics_sheet(
+        workbook,
+        "Calibration Statistics",
+        evaluation.get("calibration_statistics"),
+    )
     _write_calibration_summary_sheet(
         workbook,
         evaluation.get("calibration_summary"),
+    )
+    _write_metrics_sheet(
+        workbook,
+        "Calibration Applied",
+        evaluation.get("calibration_applied"),
     )
     _write_confusion_matrix_sheet(
         workbook,
@@ -261,10 +274,18 @@ def _write_summary_sheet(
 
     evaluation_config = config["parameters"]["evaluation"]
 
+    if evaluation_config["mode"] == "existing_model":
+        model_version = evaluation_config["model"]["version"]
+        model_type = evaluation_config["model"]["type"]
+    else:
+        modelling_config = config["parameters"]["modelling"]
+        model_version = modelling_config["version"]
+        model_type = modelling_config["algorithm"]
+
     rows = [
         ("Dataset", dataset_name),
-        ("Model Version", evaluation_config["model"]["version"]),
-        ("Model Type", evaluation_config["model"]["type"]),
+        ("Model Version", model_version),
+        ("Model Type", model_type),
         (
             "Classification Threshold",
             evaluation_config["classification"]["threshold"],
@@ -518,11 +539,12 @@ def save_evaluation_charts(
         dataset_name,
     )
 
-    _save_calibration_chart(
-        evaluation,
-        evaluation_dir,
-        dataset_name,
-    )
+    if evaluation.get("calibration") is not None:
+        _save_calibration_chart(
+            evaluation,
+            evaluation_dir,
+            dataset_name,
+        )
 
 
 def _save_roc_curve(
@@ -626,11 +648,46 @@ def _save_ks_curve(
 
 def _save_risk_decile_chart(
     evaluation: dict,
-    evaluation_dir: Path,
+    evaluation_dir,
     dataset_name: str,
 ) -> None:
 
-    deciles = evaluation["risk_deciles"]
+    deciles = pd.DataFrame(evaluation.get("risk_deciles", []))
+
+    if deciles.empty:
+        logger.warning("Skipping risk decile chart: no risk decile data available.")
+        return
+
+    # Preserve compatibility with existing evaluation output.
+    predicted_pd_column = None
+
+    if "average_predicted_pd" in deciles.columns:
+        predicted_pd_column = "average_predicted_pd"
+
+    elif "average_predicted_df" in deciles.columns:
+        predicted_pd_column = "average_predicted_df"
+
+    else:
+        logger.warning(
+            "Skipping risk decile chart: predicted PD column not found. "
+            "Available columns=%s",
+            list(deciles.columns),
+        )
+        return
+
+    required_columns = {
+        "risk_decile",
+        "actual_event_rate",
+    }
+
+    missing_columns = required_columns - set(deciles.columns)
+
+    if missing_columns:
+        logger.warning(
+            "Skipping risk decile chart: missing columns=%s",
+            sorted(missing_columns),
+        )
+        return
 
     fig, ax = plt.subplots(figsize=(8, 6))
 
@@ -643,27 +700,33 @@ def _save_risk_decile_chart(
 
     ax.plot(
         deciles["risk_decile"],
-        deciles["average_predicted_df"],
+        deciles[predicted_pd_column],
         marker="o",
         label="Average Predicted PD",
     )
 
     ax.set_title(f"Risk Deciles — {dataset_name.upper()}")
-    ax.set_xlabel("Risk Decile")
-    ax.set_ylabel("Probability of Default")
 
+    ax.set_xlabel("Risk Decile")
+    ax.set_ylabel("Probability")
     ax.legend()
-    ax.grid(alpha=0.3)
 
     fig.tight_layout()
 
+    output_path = evaluation_dir / f"{dataset_name}_risk_deciles.png"
+
     fig.savefig(
-        evaluation_dir / "risk_deciles.png",
-        dpi=200,
+        output_path,
+        dpi=150,
         bbox_inches="tight",
     )
 
     plt.close(fig)
+
+    logger.info(
+        "Risk decile chart saved: %s",
+        output_path,
+    )
 
 
 def _save_calibration_chart(
