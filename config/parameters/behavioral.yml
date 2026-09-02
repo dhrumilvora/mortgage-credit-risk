@@ -70,9 +70,9 @@ parameters:
       # Current delinquency / payment state
       # ----------------------------------------------------------
 
-      - delinquent_accrued_interest
+      # - delinquent_accrued_interest
       # - months_since_ddlpi
-      - months_since_last_paid_installment
+      # - months_since_last_paid_installment
 
       # - current_dpd_numeric
 

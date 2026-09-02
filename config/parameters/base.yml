@@ -11,9 +11,9 @@ parameters:
   engine: "pyspark" # pyspark / pandas
 
   spark:
-    master: local[16]
-    driver_memory: 12g
-    shuffle_partitions: 256
+    master: local[28]
+    driver_memory: 56g
+    shuffle_partitions: 512
 
   # ============================================================
   # LOGGING
@@ -107,8 +107,8 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: true
-
+    skip: false
+    use_existing_splits: true
     version: test_unbalanced_quarterly
 
     # ----------------------------------------------------------
@@ -116,9 +116,9 @@ parameters:
     # ----------------------------------------------------------
 
     vintages_train:
-    # - 2015
-    # - 2016
-    # - 2017
+    - 2015
+    - 2016
+    - 2017
     - 2018
     - 2019
     - 2020
@@ -169,20 +169,22 @@ parameters:
       n_jobs: -1
 
     xgboost:
-      tree_method: "hist" # REQUIRED for PySpark 25M row training
-      n_jobs: 8 # Maps to num_workers in SparkXGBClassifier
-      num_partitions: 200 # Spark partition count for memory distribution (100–200 ideal)
+      tree_method: "hist"
+      n_jobs: 16
       n_estimators: 1000
-      max_depth: 7
+      max_depth: 5
       learning_rate: 0.03
       subsample: 0.8
       colsample_bytree: 0.7
-      min_child_weight: 50
+      min_child_weight: 500
       reg_alpha: 1.0
       reg_lambda: 5.0
       eval_metric: "aucpr"
       scale_pos_weight: 1.0
+      base_score: 0.01
+      early_stopping_rounds: 150
 
+      
     logistic_regression:
       penalty: l2
       C: 1.0
