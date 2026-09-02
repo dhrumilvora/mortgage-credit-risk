@@ -30,6 +30,28 @@ def _validate_required_columns(
         )
 
 
+def _current_dpd_expressions(
+    status_column: str = "current_loan_delinquency_status",
+) -> tuple:
+    """Return canonical Freddie Mac current-DPD expressions."""
+    numeric = F.expr(f"try_cast({status_column} as double)")
+    return (
+        numeric.alias("current_dpd_numeric"),
+        F.when(numeric >= 1, 1).otherwise(0).cast("byte").alias("current_dpd_30_plus"),
+        F.when(numeric >= 2, 1).otherwise(0).cast("byte").alias("current_dpd_60_plus"),
+        F.when(numeric >= 1, 1)
+        .otherwise(0)
+        .cast("byte")
+        .alias("current_delinquency_flag"),
+    )
+
+
+def _serious_delinquency_expression(status_column: str, threshold: int) -> F.Column:
+    """Return the canonical serious-delinquency expression."""
+    numeric = F.expr(f"try_cast({status_column} as double)")
+    return (numeric >= F.lit(threshold)) | (F.col(status_column) == F.lit("RA"))
+
+
 # ----------------------------------------------------------------------
 # Serious delinquency
 # ----------------------------------------------------------------------
@@ -270,8 +292,8 @@ def build_behavioral_features_spark(
 
     serious_threshold = config["parameters"]["target"]["serious_delinquency_threshold"]
 
-    serious_flag = (current_dpd_numeric >= F.lit(serious_threshold)) | (
-        F.col("current_loan_delinquency_status") == F.lit("RA")
+    serious_flag = _serious_delinquency_expression(
+        "current_loan_delinquency_status", serious_threshold
     )
 
     # Freddie binary indicators: Y = active.
@@ -376,19 +398,7 @@ def build_behavioral_features_spark(
         # --------------------------------------------------------------
         # Current delinquency
         # --------------------------------------------------------------
-        current_dpd_numeric.alias("current_dpd_numeric"),
-        F.when(current_dpd_numeric >= 30, 1)
-        .otherwise(0)
-        .cast("byte")
-        .alias("current_dpd_30_plus"),
-        F.when(current_dpd_numeric >= 60, 1)
-        .otherwise(0)
-        .cast("byte")
-        .alias("current_dpd_60_plus"),
-        F.when(current_dpd_numeric > 0, 1)
-        .otherwise(0)
-        .cast("byte")
-        .alias("current_delinquency_flag"),
+        *_current_dpd_expressions(),
         F.coalesce(
             serious_flag,
             F.lit(False),
@@ -428,16 +438,15 @@ def build_behavioral_features_spark(
     # ------------------------------------------------------------------
 
     recent_feature_expressions = []
+    recent_base_window = Window.partitionBy("loan_id").orderBy(
+        F.col("calculated_loan_age").asc()
+    )
 
     for window_months in lookback_windows_months:
 
-        recent_window = (
-            Window.partitionBy("loan_id")
-            .orderBy(F.col("calculated_loan_age").asc())
-            .rangeBetween(
-                -(window_months - 1),
-                Window.currentRow,
-            )
+        recent_window = recent_base_window.rangeBetween(
+            -(window_months - 1),
+            Window.currentRow,
         )
 
         recent_feature_expressions.extend(
@@ -680,34 +689,7 @@ def add_behavioral_history_features_spark(
 
     result = df.select(
         "*",
-        current_dpd_numeric.alias("current_dpd_numeric"),
-        F.when(
-            current_dpd_numeric >= 30,
-            F.lit(1),
-        )
-        .otherwise(
-            F.lit(0),
-        )
-        .cast("byte")
-        .alias("current_dpd_30_plus"),
-        F.when(
-            current_dpd_numeric >= 60,
-            F.lit(1),
-        )
-        .otherwise(
-            F.lit(0),
-        )
-        .cast("byte")
-        .alias("current_dpd_60_plus"),
-        F.when(
-            current_dpd_numeric > 0,
-            F.lit(1),
-        )
-        .otherwise(
-            F.lit(0),
-        )
-        .cast("byte")
-        .alias("current_delinquency_flag"),
+        *_current_dpd_expressions(),
     )
 
     history_window = (
