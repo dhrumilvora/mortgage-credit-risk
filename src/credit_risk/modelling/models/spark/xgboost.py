@@ -60,6 +60,7 @@ def train_xgboost_spark(
     model = SparkXGBClassifier(
         features_col="features",
         label_col="label",
+        validation_indicator_col ="is_validation",
         # Speed & Scaling Engine
         tree_method=xgb_config.get("tree_method", "hist"),  # Essential for 25M rows
         num_workers=xgb_config["n_jobs"],  # Number of Spark parallel worker tasks
@@ -75,6 +76,8 @@ def train_xgboost_spark(
         eval_metric=xgb_config["eval_metric"],
         scale_pos_weight=xgb_config["scale_pos_weight"],
         random_state=modelling_config["random_state"],
+        base_score = xgb_config['base_score'],
+        early_stopping_rounds = xgb_config['early_stopping_rounds']
     )
 
     fitted_model = model.fit(training_df)

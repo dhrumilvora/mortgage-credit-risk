@@ -25,6 +25,7 @@ from credit_risk.modelling.preprocessing_spark import (
     fit_preprocessor_spark,
     transform_with_preprocessor_spark,
 )
+from credit_risk.data.readers import read_spark_parquet
 
 from credit_risk.modelling.model import train_model_pandas
 from credit_risk.modelling.artifacts import save_artifacts_pandas
@@ -153,109 +154,29 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
     elif modelling_config["train_test_split"] == "yearly":
 
         development_vintages = (
-            modelling_config["vintages_train"] + modelling_config["vintages_test"]
+            modelling_config["vintages_train"]
+            + modelling_config["vintages_test"]
         )
 
     else:
         raise ValueError(
-            "Unsupported train_test_split: " f"{modelling_config['train_test_split']}"
+            "Unsupported train_test_split: "
+            f"{modelling_config['train_test_split']}"
         )
 
     oot_vintages = modelling_config["vintages_oot"]
 
-    logger.info(
-        "Loading development vintages: %s",
-        ", ".join(map(str, development_vintages)),
-    )
-
-    logger.info(
-        "Loading OOT vintages: %s",
-        ", ".join(map(str, oot_vintages)),
-    )
-
     # ------------------------------------------------------------
-    # LOAD
+    # Existing split configuration
     # ------------------------------------------------------------
 
-    step_start = perf_counter()
-
-    development_df = load_modelling_vintage_spark(
-        spark,
-        config,
-        development_vintages,
-    )
-
-    oot_df = load_modelling_vintage_spark(
-        spark,
-        config,
-        oot_vintages,
-    )
-
-    logger.info(
-        "Modelling data loaded in %.2f seconds",
-        perf_counter() - step_start,
+    use_existing_splits = modelling_config.get(
+        "use_existing_splits",
+        False,
     )
 
     # ------------------------------------------------------------
-    # SPLIT
-    # ------------------------------------------------------------
-
-    step_start = perf_counter()
-
-    train_df, test_df = split_dataset_spark(
-        development_df,
-        config,
-    )
-
-    # development_df is only a lineage reference.
-    # It is not persisted, so there is nothing useful to unpersist.
-    del development_df
-
-    logger.info(
-        "Train/validation split constructed in %.2f seconds",
-        perf_counter() - step_start,
-    )
-
-    # ------------------------------------------------------------
-    # MATERIALIZE COUNTS
-    # ------------------------------------------------------------
-    #
-    # IMPORTANT:
-    # Do NOT persist all three datasets.
-    #
-    # With 25M+ train rows, 15M+ validation rows and 6M+ OOT rows,
-    # persisting all three can put enormous pressure on the local
-    # Spark JVM.
-    #
-    # We deliberately accept recomputation here in exchange for
-    # memory safety.
-    # ------------------------------------------------------------
-
-    step_start = perf_counter()
-
-    train_count = train_df.count()
-    test_count = test_df.count()
-    oot_count = oot_df.count()
-
-    logger.info(
-        "Train=%s validation=%s OOT=%s materialized in %.2f seconds",
-        f"{train_count:,}",
-        f"{test_count:,}",
-        f"{oot_count:,}",
-        perf_counter() - step_start,
-    )
-
-    if train_count == 0:
-        raise ValueError("Training dataset is empty.")
-
-    if test_count == 0:
-        raise ValueError("Validation dataset is empty.")
-
-    if oot_count == 0:
-        raise ValueError("OOT dataset is empty.")
-
-    # ------------------------------------------------------------
-    # ARTIFACT PATHS
+    # Artifact paths
     # ------------------------------------------------------------
 
     train_path = create_path(
@@ -263,15 +184,15 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
         config["catalog"],
         "train_df",
         approach,
-        must_exist=False,
+        must_exist=use_existing_splits,
     )
 
-    test_path = create_path(
+    validation_path = create_path(
         config["catalog"]["base"],
         config["catalog"],
         "validation_df",
         approach,
-        must_exist=False,
+        must_exist=use_existing_splits,
     )
 
     oot_path = create_path(
@@ -279,33 +200,128 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
         config["catalog"],
         "oot_df",
         approach,
-        must_exist=False,
+        must_exist=use_existing_splits,
     )
 
     # ------------------------------------------------------------
-    # OPTIONAL ARTIFACT WRITES
-    # ------------------------------------------------------------
-    #
-    # These writes are deliberately performed without caching.
-    #
-    # If these files already exist and the split has not changed,
-    # this block should eventually be made configurable/skippable.
+    # LOAD / BUILD SPLITS
     # ------------------------------------------------------------
 
-    write_spark_parquet(
-        train_df,
-        train_path,
+    if use_existing_splits:
+
+        logger.info("Using existing modelling splits")
+
+        step_start = perf_counter()
+
+        train_df = read_spark_parquet(spark,train_path)
+        validation_df = read_spark_parquet(spark,validation_path)
+        oot_df = read_spark_parquet(spark,oot_path)
+
+        logger.info(
+            "Existing modelling splits loaded in %.2f seconds",
+            perf_counter() - step_start,
+        )
+
+    else:
+
+        logger.info(
+            "Loading development vintages: %s",
+            ", ".join(map(str, development_vintages)),
+        )
+
+        logger.info(
+            "Loading OOT vintages: %s",
+            ", ".join(map(str, oot_vintages)),
+        )
+
+        # --------------------------------------------------------
+        # LOAD
+        # --------------------------------------------------------
+
+        step_start = perf_counter()
+
+        development_df = load_modelling_vintage_spark(
+            spark,
+            config,
+            development_vintages,
+        )
+
+        oot_df = load_modelling_vintage_spark(
+            spark,
+            config,
+            oot_vintages,
+        )
+
+        logger.info(
+            "Modelling data loaded in %.2f seconds",
+            perf_counter() - step_start,
+        )
+
+        # --------------------------------------------------------
+        # SPLIT
+        # --------------------------------------------------------
+
+        step_start = perf_counter()
+
+        train_df, validation_df = split_dataset_spark(
+            development_df,
+            config,
+        )
+
+        del development_df
+
+        logger.info(
+            "Train/validation split constructed in %.2f seconds",
+            perf_counter() - step_start,
+        )
+
+        # --------------------------------------------------------
+        # WRITE SPLITS
+        # --------------------------------------------------------
+
+        write_spark_parquet(
+            train_df,
+            train_path,
+        )
+
+        write_spark_parquet(
+            validation_df,
+            validation_path,
+        )
+
+        write_spark_parquet(
+            oot_df,
+            oot_path,
+        )
+
+        logger.info("Modelling splits written to disk")
+
+    # ------------------------------------------------------------
+    # MATERIALIZE COUNTS
+    # ------------------------------------------------------------
+
+    step_start = perf_counter()
+
+    train_count = train_df.count()
+    validation_count = validation_df.count()
+    oot_count = oot_df.count()
+
+    logger.info(
+        "Train=%s validation=%s OOT=%s materialized in %.2f seconds",
+        f"{train_count:,}",
+        f"{validation_count:,}",
+        f"{oot_count:,}",
+        perf_counter() - step_start,
     )
 
-    write_spark_parquet(
-        test_df,
-        test_path,
-    )
+    if train_count == 0:
+        raise ValueError("Training dataset is empty.")
 
-    write_spark_parquet(
-        oot_df,
-        oot_path,
-    )
+    if validation_count == 0:
+        raise ValueError("Validation dataset is empty.")
+
+    if oot_count == 0:
+        raise ValueError("OOT dataset is empty.")
 
     # ------------------------------------------------------------
     # SPLIT FEATURES / TARGET
@@ -319,7 +335,7 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
     )
 
     X_validation, y_validation = split_features_target_spark(
-        test_df,
+        validation_df,
         config,
     )
 
@@ -329,20 +345,11 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
     )
 
     # ------------------------------------------------------------
-    # RELEASE LARGE DATAFRAMES THAT ARE NO LONGER REQUIRED
-    # ------------------------------------------------------------
-    #
-    # We no longer need test_df or oot_df during model training.
-    #
-    # They were written to disk above.
-    # Removing Python references allows Spark to discard their
-    # lineage when no longer needed.
+    # RELEASE DATAFRAMES NOT REQUIRED FOR TRAINING
     # ------------------------------------------------------------
 
-    del test_df
+    del train_df
     del oot_df
-    del X_validation
-    del y_validation
 
     # ------------------------------------------------------------
     # PREPROCESSOR FIT
@@ -361,16 +368,7 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
     )
 
     # ------------------------------------------------------------
-    # TRANSFORM TRAIN
-    # ------------------------------------------------------------
-    #
-    # IMPORTANT:
-    # Do NOT persist the transformed training matrix by default.
-    #
-    # The transformed dataset is potentially enormous, particularly
-    # after one-hot encoding.
-    #
-    # The model should consume it directly.
+    # TRANSFORM TRAIN + VALIDATION
     # ------------------------------------------------------------
 
     step_start = perf_counter()
@@ -381,8 +379,15 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
         config,
     )
 
+    X_val_transformed = transform_with_preprocessor_spark(
+        X_validation,
+        preprocessor_model,
+        config,
+    )
+
     logger.info(
-        "Training matrix transformation constructed in %.2f seconds",
+        "Training and validation matrix transformations constructed "
+        "in %.2f seconds",
         perf_counter() - step_start,
     )
 
@@ -397,6 +402,8 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
     model = train_model_spark(
         X_train_transformed,
         y_train,
+        X_val_transformed,
+        y_validation,
         config,
     )
 
@@ -409,9 +416,9 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
     # EVENT RATE
     # ------------------------------------------------------------
 
-    event_rate = y_train.select(F.avg(F.col(target)).alias("event_rate")).first()[
-        "event_rate"
-    ]
+    event_rate = y_train.select(
+        F.avg(F.col(target)).alias("event_rate")
+    ).first()["event_rate"]
 
     # ------------------------------------------------------------
     # SAVE
@@ -424,6 +431,7 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
         preprocessor_model,
         {
             "training_rows": train_count,
+            "validation_rows": validation_count,
             "training_features": len(X_train_transformed.columns),
             "event_rate": event_rate,
         },
@@ -439,21 +447,19 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
     # CLEANUP
     # ------------------------------------------------------------
 
-    # No explicit unpersist() is required because we deliberately
-    # did not persist the large modelling DataFrames.
-    #
-    # Remove references so Python/Spark can release lineage objects.
-
     del X_train_transformed
     del X_train
     del y_train
+    del X_val_transformed
+    del X_validation
+    del y_validation
 
     logger.info(
         "Modelling pipeline completed: "
         "train_rows=%s validation_rows=%s "
         "duration_seconds=%.2f",
         f"{train_count:,}",
-        f"{test_count:,}",
+        f"{validation_count:,}",
         perf_counter() - start,
     )
 

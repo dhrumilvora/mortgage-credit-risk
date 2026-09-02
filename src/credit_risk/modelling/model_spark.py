@@ -74,6 +74,8 @@ def _prepare_training_data_spark(
 def train_model_spark(
     X_train: DataFrame,
     y_train: DataFrame,
+    X_val:DataFrame,
+    y_val:DataFrame,
     config: dict,
 ):
     algorithm = config["parameters"]["modelling"]["algorithm"]
@@ -105,7 +107,10 @@ def train_model_spark(
         y_train,
         config,
     )
-
+    val_df = _prepare_training_data_spark(
+        X_val,
+        y_val,config
+    )
     # --------------------------------------------------------------
     # Materialize ONCE.
     #
@@ -158,15 +163,24 @@ def train_model_spark(
             training_df,
             config,
         )
-
+        
     elif algorithm == "xgboost":
 
         from credit_risk.modelling.models.spark.xgboost import (
             train_xgboost_spark,
         )
+        train_xgb = (
+        training_df
+        .withColumn("is_validation", F.lit(False))
+        .unionByName(
+            val_df.withColumn("is_validation", F.lit(True))
+        )
+        )
 
+        del training_df
+        del val_df
         return train_xgboost_spark(
-            training_df,
+            train_xgb,
             config,
         )
 
