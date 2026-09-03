@@ -11,7 +11,7 @@ parameters:
   engine: "pyspark" # pyspark / pandas
 
   spark:
-    master: local[28]
+    master: local[*]
     driver_memory: 56g
     shuffle_partitions: 512
 
@@ -44,13 +44,13 @@ parameters:
     # Vintages to ingest and preprocess.
     all_vintages:
     - 2015
-    # - 2016
-    # - 2017
-    # - 2018
-    # - 2019
-    # - 2020
-    # - 2021
-    # - 2022
+    - 2016
+    - 2017
+    - 2018
+    - 2019
+    - 2020
+    - 2021
+    - 2022
 
     quarters: [ "Q1", "Q2", "Q3", "Q4" ]
     id_col: "loan_id"
@@ -62,7 +62,7 @@ parameters:
       performance_workers: 8
 
     preprocess:
-      skip: false
+      skip: true
 
       performance_batch_size: 100000
 
@@ -140,7 +140,7 @@ parameters:
     # Model algorithm
     # ----------------------------------------------------------
 
-    algorithm: xgboost
+    algorithm: logistic_regression
 
     lightgbm:
       n_estimators: 300
@@ -172,25 +172,25 @@ parameters:
       tree_method: "hist"
       n_jobs: 16
       n_estimators: 1000
-      max_depth: 5
+      max_depth: 8
       learning_rate: 0.03
       subsample: 0.8
       colsample_bytree: 0.7
       min_child_weight: 500
       reg_alpha: 1.0
       reg_lambda: 5.0
-      eval_metric: "aucpr"
+      eval_metric: "logloss"
       scale_pos_weight: 1.0
       base_score: 0.01
       early_stopping_rounds: 150
 
     logistic_regression:
-      penalty: l2
-      C: 1.0
-      solver: lbfgs
+      reg_param: 1.0
+      elastic_net_param: 0.0
       max_iter: 1000
-      class_weight: null
-
+      fit_intercept: true
+      standardization: true
+  
   # ============================================================
   # COMMON TARGET DEFINITIONS
   # ============================================================
@@ -206,7 +206,7 @@ parameters:
   # ============================================================
 
   evaluation:
-    skip: true
+    skip: false
 
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run
@@ -214,7 +214,7 @@ parameters:
 
     model:
       version: test_unbalanced_quarterly
-      type: xgboost
+      type: logistic_regression
 
     threshold_selection:
       enabled: true
@@ -226,7 +226,7 @@ parameters:
       oot: true
 
     shap:
-      enabled: true
+      enabled: false
 
     # ----------------------------------------------------------
     # Classification threshold

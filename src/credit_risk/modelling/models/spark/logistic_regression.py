@@ -48,6 +48,7 @@ def train_logistic_regression_spark(
     # Spark Logistic Regression
     # --------------------------------------------------------------
 
+    
     model = LogisticRegression(
         featuresCol="features",
         labelCol="label",
@@ -58,10 +59,7 @@ def train_logistic_regression_spark(
         regParam=lr_config["reg_param"],
         elasticNetParam=lr_config["elastic_net_param"],
         fitIntercept=lr_config["fit_intercept"],
-        standardization=lr_config.get(
-            "standardization",
-            True,
-        ),
+        standardization=lr_config["standardization"],
     )
 
     fitted_model = model.fit(
