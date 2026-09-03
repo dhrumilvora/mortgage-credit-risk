@@ -14,8 +14,6 @@ parameters:
 
     lookback_windows_months:
     - 3
-    - 6
-    - 9
     - 12
 
     prediction_horizon_months: 12
@@ -49,7 +47,7 @@ parameters:
       - current_actual_upb
       - current_interest_rate
       - estimated_ltv
-      # - calculated_loan_age
+      - calculated_loan_age
       - remaining_months_to_legal_maturity
 
       # ----------------------------------------------------------
@@ -58,24 +56,6 @@ parameters:
 
       - non_interest_bearing_upb_pct
 
-      # Removed: redundant with current_non_interest_bearing_upb
-      # and current_interest_bearing_upb.
-      # - current_non_interest_bearing_upb
-      # - current_interest_bearing_upb
-
-      # Removed: complementary to non_interest_bearing_upb_pct.
-      # - interest_bearing_upb_pct
-
-      # ----------------------------------------------------------
-      # Current delinquency / payment state
-      # ----------------------------------------------------------
-
-      # - delinquent_accrued_interest
-      # - months_since_ddlpi
-      # - months_since_last_paid_installment
-
-      # - current_dpd_numeric
-
       # ----------------------------------------------------------
       # Current / lifetime behavioural history
       # ----------------------------------------------------------
@@ -83,8 +63,6 @@ parameters:
       - max_dpd_to_date
       - delinquency_months_to_date
       - months_since_last_delinquency
-      - ever_30dpd_to_date
-      - ever_60dpd_to_date
 
       # ----------------------------------------------------------
       # Lifetime intervention / assistance history
@@ -98,29 +76,11 @@ parameters:
       # ----------------------------------------------------------
       # Recent behavioural history
       # ----------------------------------------------------------
-
-      # 6-month lookback
-
-      # Temporarily removed.
-      # We retain 3m and 12m windows to represent
-      # short-term and longer-term behavioural history.
-      #
-      - dpd_30_count_6m
-      - dpd_60_count_6m
-      - max_dpd_6m
-      - delinquency_months_6m
-      - modification_count_6m
-      - payment_deferral_count_6m
-      - borrower_assistance_count_6m
-      - disaster_delinquency_count_6m
-      - rate_step_count_6m
-
       # 12-month lookback
 
       - dpd_30_count_12m
       - dpd_60_count_12m
       - max_dpd_12m
-      - delinquency_months_12m
       - modification_count_12m
       - payment_deferral_count_12m
       - borrower_assistance_count_12m
@@ -132,27 +92,11 @@ parameters:
       - dpd_30_count_3m
       - dpd_60_count_3m
       - max_dpd_3m
-      - delinquency_months_3m
       - modification_count_3m
       - payment_deferral_count_3m
       - borrower_assistance_count_3m
       - disaster_delinquency_count_3m
       - rate_step_count_3m
-
-      # 9-month lookback
-
-      # Temporarily removed.
-      # We retain 3m and 12m windows to reduce redundancy.
-      #
-      - dpd_30_count_9m
-      - dpd_60_count_9m
-      - max_dpd_9m
-      - delinquency_months_9m
-      - modification_count_9m
-      - payment_deferral_count_9m
-      - borrower_assistance_count_9m
-      - disaster_delinquency_count_9m
-      - rate_step_count_9m
 
       # ----------------------------------------------------------
       # Post-origination trajectory
@@ -161,13 +105,29 @@ parameters:
       - upb_pct_change_from_origination
       - rate_change_from_origination
 
+      # ----------------------------------------------------------
+      # Point-in-time delinquency trajectory / drift
+      # ----------------------------------------------------------
+
+      # Phase 1: persistence / recency / direction
+      - current_delinquency_streak
+      - max_delinquency_streak_12m
+      - months_since_last_30dpd
+      - months_since_last_60dpd
+      - dpd_trend_6m
+
+      # Phase 2: change / acceleration / recurrence
+      - dpd_acceleration_6m
+      - delinquency_intensity_change_6m
+      - dpd_severity_change_6m
+      - delinquency_episode_count
+      - relapse_after_current
+
       categorical_features:
 
       # ----------------------------------------------------------
       # Origination categorical variables
       # ----------------------------------------------------------
-
-      # - first_time_homebuyer_flag
       - property_type
       - occupancy_status
       - loan_purpose
@@ -185,9 +145,8 @@ parameters:
       - payment_deferral_flag
       - delinquency_due_to_disaster
       - borrower_assistance_plan
-      # - mi_cancellation_indicator
 
-      engineered_features: [] # - original_dti_missing
+      engineered_features: []
 
   # ============================================================
   # TARGET

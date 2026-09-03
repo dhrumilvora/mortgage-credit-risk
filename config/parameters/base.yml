@@ -44,13 +44,13 @@ parameters:
     # Vintages to ingest and preprocess.
     all_vintages:
     - 2015
-    - 2016
-    - 2017
-    - 2018
-    - 2019
-    - 2020
-    - 2021
-    - 2022
+    # - 2016
+    # - 2017
+    # - 2018
+    # - 2019
+    # - 2020
+    # - 2021
+    # - 2022
 
     quarters: [ "Q1", "Q2", "Q3", "Q4" ]
     id_col: "loan_id"
@@ -62,7 +62,7 @@ parameters:
       performance_workers: 8
 
     preprocess:
-      skip: true
+      skip: false
 
       performance_batch_size: 100000
 
@@ -107,7 +107,7 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: false
+    skip: true
     use_existing_splits: true
     version: test_unbalanced_quarterly
 
@@ -184,7 +184,6 @@ parameters:
       base_score: 0.01
       early_stopping_rounds: 150
 
-      
     logistic_regression:
       penalty: l2
       C: 1.0
@@ -207,7 +206,7 @@ parameters:
   # ============================================================
 
   evaluation:
-    skip: false
+    skip: true
 
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run

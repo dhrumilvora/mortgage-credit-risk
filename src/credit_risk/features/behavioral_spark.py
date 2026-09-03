@@ -185,6 +185,500 @@ def build_behavioral_risk_set_spark(
 
 
 # ----------------------------------------------------------------------
+# Delinquency trajectory / drift
+# ----------------------------------------------------------------------
+
+
+def add_delinquency_trajectory_features_spark(
+    df: DataFrame,
+) -> DataFrame:
+    """
+    Add point-in-time delinquency trajectory and drift features.
+
+    Phase 1:
+        - current_delinquency_streak
+        - max_delinquency_streak_12m
+        - months_since_last_30dpd
+        - months_since_last_60dpd
+        - dpd_trend_6m
+
+    Phase 2:
+        - dpd_acceleration_6m
+        - delinquency_intensity_change_6m
+        - dpd_severity_change_6m
+        - delinquency_episode_count
+        - relapse_after_current
+    """
+    _validate_required_columns(
+        df,
+        {
+            "loan_id",
+            "calculated_loan_age",
+            "current_dpd_numeric",
+            "current_dpd_30_plus",
+            "current_dpd_60_plus",
+            "current_delinquency_flag",
+        },
+        "delinquency trajectory features",
+    )
+
+    base_window = Window.partitionBy("loan_id").orderBy(
+        F.col("calculated_loan_age").asc()
+    )
+
+    history_window = base_window.rowsBetween(
+        Window.unboundedPreceding,
+        Window.currentRow,
+    )
+
+    # ==============================================================
+    # PHASE 1 — STREAK / RECENCY
+    # ==============================================================
+
+    last_current_age = F.max(
+        F.when(
+            F.col("current_delinquency_flag") == 0,
+            F.col("calculated_loan_age"),
+        )
+    ).over(history_window)
+
+    current_streak = (
+        F.when(
+            F.col("current_delinquency_flag") == 1,
+            F.col("calculated_loan_age")
+            - F.coalesce(
+                last_current_age,
+                F.col("calculated_loan_age") - 1,
+            ),
+        )
+        .otherwise(F.lit(0))
+        .cast("int")
+    )
+
+    last_30dpd_age = F.max(
+        F.when(
+            F.col("current_dpd_30_plus") == 1,
+            F.col("calculated_loan_age"),
+        )
+    ).over(history_window)
+
+    last_60dpd_age = F.max(
+        F.when(
+            F.col("current_dpd_60_plus") == 1,
+            F.col("calculated_loan_age"),
+        )
+    ).over(history_window)
+
+    working = df.select(
+        "*",
+        current_streak.alias("current_delinquency_streak"),
+        F.when(
+            last_30dpd_age.isNull(),
+            F.lit(None).cast("double"),
+        )
+        .otherwise(F.col("calculated_loan_age") - last_30dpd_age)
+        .alias("months_since_last_30dpd"),
+        F.when(
+            last_60dpd_age.isNull(),
+            F.lit(None).cast("double"),
+        )
+        .otherwise(F.col("calculated_loan_age") - last_60dpd_age)
+        .alias("months_since_last_60dpd"),
+    )
+
+    # Maximum streak observed within trailing 12 months.
+    trajectory_12m_window = base_window.rangeBetween(
+        -11,
+        Window.currentRow,
+    )
+
+    working = working.withColumn(
+        "max_delinquency_streak_12m",
+        F.max(
+            F.least(
+                F.col("current_delinquency_streak"),
+                F.lit(12),
+            )
+        )
+        .over(trajectory_12m_window)
+        .cast("short"),
+    )
+
+    # ==============================================================
+    # PHASE 1 — DPD TREND
+    # ==============================================================
+
+    trajectory_6m_window = base_window.rangeBetween(
+        -5,
+        Window.currentRow,
+    )
+
+    valid_dpd = F.col("current_dpd_numeric").isNotNull()
+
+    x = F.col("calculated_loan_age").cast("double")
+    y = F.col("current_dpd_numeric").cast("double")
+
+    n = F.sum(F.when(valid_dpd, 1).otherwise(0)).over(trajectory_6m_window)
+
+    sum_x = F.sum(F.when(valid_dpd, x)).over(trajectory_6m_window)
+
+    sum_y = F.sum(F.when(valid_dpd, y)).over(trajectory_6m_window)
+
+    sum_xy = F.sum(F.when(valid_dpd, x * y)).over(trajectory_6m_window)
+
+    sum_x2 = F.sum(F.when(valid_dpd, x * x)).over(trajectory_6m_window)
+
+    denominator = n * sum_x2 - sum_x * sum_x
+
+    working = working.withColumn(
+        "dpd_trend_6m",
+        F.when(
+            (n < 2) | denominator.isNull() | (denominator == 0),
+            F.lit(None).cast("double"),
+        ).otherwise((n * sum_xy - sum_x * sum_y) / denominator),
+    )
+
+    # ==============================================================
+    # PHASE 2 — INTENSITY CHANGE
+    # ==============================================================
+
+    recent_6m_window = base_window.rangeBetween(
+        -5,
+        Window.currentRow,
+    )
+
+    prior_6m_window = base_window.rangeBetween(
+        -11,
+        -6,
+    )
+
+    recent_delinquency_count = F.sum(F.col("current_delinquency_flag")).over(
+        recent_6m_window
+    )
+
+    prior_delinquency_count = F.sum(F.col("current_delinquency_flag")).over(
+        prior_6m_window
+    )
+
+    working = working.withColumn(
+        "delinquency_intensity_change_6m",
+        (
+            recent_delinquency_count.cast("double")
+            - prior_delinquency_count.cast("double")
+        ),
+    )
+
+    # ==============================================================
+    # PHASE 2 — DPD SEVERITY CHANGE
+    # ==============================================================
+
+    recent_dpd_count = F.count(F.col("current_dpd_numeric")).over(recent_6m_window)
+
+    prior_dpd_count = F.count(F.col("current_dpd_numeric")).over(prior_6m_window)
+
+    recent_dpd_avg = F.when(
+        recent_dpd_count > 0,
+        F.sum(F.col("current_dpd_numeric")).over(recent_6m_window) / recent_dpd_count,
+    )
+
+    prior_dpd_avg = F.when(
+        prior_dpd_count > 0,
+        F.sum(F.col("current_dpd_numeric")).over(prior_6m_window) / prior_dpd_count,
+    )
+
+    working = working.withColumn(
+        "dpd_severity_change_6m",
+        F.when(
+            recent_dpd_avg.isNull() | prior_dpd_avg.isNull(),
+            F.lit(None).cast("double"),
+        )
+        .otherwise(recent_dpd_avg - prior_dpd_avg)
+        .cast("double"),
+    )
+
+    # ==============================================================
+    # PHASE 2 — DPD ACCELERATION
+    # ==============================================================
+
+    recent_3m_window = base_window.rangeBetween(
+        -2,
+        Window.currentRow,
+    )
+
+    prior_3m_window = base_window.rangeBetween(
+        -5,
+        -3,
+    )
+
+    def _slope(window):
+        valid = F.col("current_dpd_numeric").isNotNull()
+
+        n = F.count(F.when(valid, F.col("current_dpd_numeric"))).over(window)
+
+        sum_x = F.sum(F.when(valid, x)).over(window)
+
+        sum_y = F.sum(F.when(valid, y)).over(window)
+
+        sum_xy = F.sum(F.when(valid, x * y)).over(window)
+
+        sum_x2 = F.sum(F.when(valid, x * x)).over(window)
+
+        denominator = n * sum_x2 - sum_x * sum_x
+
+        return F.when(
+            (n < 2) | denominator.isNull() | (denominator == 0),
+            F.lit(None).cast("double"),
+        ).otherwise((n * sum_xy - sum_x * sum_y) / denominator)
+
+    recent_slope = _slope(recent_3m_window)
+    prior_slope = _slope(prior_3m_window)
+
+    working = working.withColumn(
+        "dpd_acceleration_6m",
+        F.when(
+            recent_slope.isNull() | prior_slope.isNull(),
+            F.lit(None).cast("double"),
+        )
+        .otherwise(recent_slope - prior_slope)
+        .cast("double"),
+    )
+
+    # ==============================================================
+    # PHASE 2 — DELINQUENCY EPISODES
+    # ==============================================================
+
+    previous_delinquency = F.lag(F.col("current_delinquency_flag")).over(base_window)
+
+    episode_start = F.when(
+        (F.col("current_delinquency_flag") == 1)
+        & (previous_delinquency.isNull() | (previous_delinquency == 0)),
+        1,
+    ).otherwise(0)
+
+    working = working.withColumn(
+        "delinquency_episode_count",
+        F.sum(episode_start).over(history_window).cast("short"),
+    )
+
+    # ==============================================================
+    # PHASE 2 — RELAPSE AFTER RECOVERY
+    # ==============================================================
+
+    prior_history_window = base_window.rowsBetween(
+        Window.unboundedPreceding,
+        -1,
+    )
+
+    ever_delinquent_before = F.max(
+        F.when(
+            F.col("current_delinquency_flag") == 1,
+            1,
+        ).otherwise(0)
+    ).over(prior_history_window)
+
+    working = working.withColumn(
+        "_ever_delinquent_before",
+        ever_delinquent_before,
+    )
+
+    recovery_event = F.when(
+        (F.col("current_delinquency_flag") == 0)
+        & (F.col("_ever_delinquent_before") == 1),
+        1,
+    ).otherwise(0)
+
+    working = working.withColumn(
+        "_recovery_after_delinquency",
+        recovery_event,
+    )
+
+    prior_recovery = F.max(F.col("_recovery_after_delinquency")).over(
+        prior_history_window
+    )
+
+    working = working.withColumn(
+        "relapse_after_current",
+        F.when(
+            (F.col("current_delinquency_flag") == 1) & (prior_recovery == 1),
+            1,
+        )
+        .otherwise(0)
+        .cast("byte"),
+    )
+
+    return working.drop(
+        "_ever_delinquent_before",
+        "_recovery_after_delinquency",
+    )
+
+
+# ----------------------------------------------------------------------
+# Lifecycle clock
+# ----------------------------------------------------------------------
+
+
+def add_calculated_loan_age_spark(
+    df: DataFrame,
+) -> DataFrame:
+    """
+    Calculate loan age from the canonical monthly Period[M] ordinal.
+
+    Pandas reads the Parquet fields as Period[M], e.g.:
+
+        2015-05
+
+    Spark reads the underlying monthly ordinal, e.g.:
+
+        544
+
+    The Pandas calculation:
+
+        months(period - first_payment_date) + 1
+
+    is therefore equivalent to:
+
+        period - first_payment_date + 1
+    """
+
+    _validate_required_columns(
+        df,
+        {
+            "period",
+            "first_payment_date",
+        },
+        "calculated loan age",
+    )
+
+    return df.withColumn(
+        "calculated_loan_age",
+        (F.col("period") - F.col("first_payment_date") + F.lit(1)).cast("int"),
+    )
+
+
+# ----------------------------------------------------------------------
+# Historical feature helper
+# ----------------------------------------------------------------------
+
+
+def add_behavioral_history_features_spark(
+    df: DataFrame,
+) -> DataFrame:
+    """
+    Add leakage-safe historical behavioral features.
+
+    This standalone function remains available for callers that need
+    only the historical feature layer.
+
+    The complete production behavioral pipeline uses the fused
+    implementation in build_behavioral_features_spark() to avoid
+    calculating the same windows twice.
+    """
+
+    _validate_required_columns(
+        df,
+        {
+            "loan_id",
+            "calculated_loan_age",
+            "current_loan_delinquency_status",
+        },
+        "behavioral history features",
+    )
+
+    result = df.select(
+        "*",
+        *_current_dpd_expressions(),
+    )
+
+    history_window = (
+        Window.partitionBy("loan_id")
+        .orderBy(F.col("calculated_loan_age").asc())
+        .rowsBetween(
+            Window.unboundedPreceding,
+            Window.currentRow,
+        )
+    )
+
+    result = result.select(
+        "*",
+        F.max(F.col("current_dpd_numeric"))
+        .over(history_window)
+        .alias("max_dpd_to_date"),
+        F.max(F.col("current_dpd_30_plus"))
+        .over(history_window)
+        .cast("byte")
+        .alias("ever_30dpd_to_date"),
+        F.max(F.col("current_dpd_60_plus"))
+        .over(history_window)
+        .cast("byte")
+        .alias("ever_60dpd_to_date"),
+        F.sum(F.col("current_delinquency_flag"))
+        .over(history_window)
+        .cast("short")
+        .alias("delinquency_months_to_date"),
+        F.max(
+            F.when(
+                F.col("current_delinquency_flag") == 1,
+                F.col("calculated_loan_age"),
+            )
+        )
+        .over(history_window)
+        .alias("_last_delinquency_age"),
+    )
+
+    return result.withColumn(
+        "months_since_last_delinquency",
+        F.when(
+            F.col("_last_delinquency_age").isNull(),
+            F.lit(None).cast("double"),
+        ).otherwise(F.col("calculated_loan_age") - F.col("_last_delinquency_age")),
+    ).drop("_last_delinquency_age")
+
+
+# ----------------------------------------------------------------------
+# Loan trajectory helper
+# ----------------------------------------------------------------------
+
+
+def add_loan_trajectory_features_spark(
+    df: DataFrame,
+) -> DataFrame:
+    """
+    Add post-origination loan trajectory features.
+    """
+
+    _validate_required_columns(
+        df,
+        {
+            "original_upb",
+            "current_actual_upb",
+            "original_interest_rate",
+            "current_interest_rate",
+        },
+        "loan trajectory features",
+    )
+
+    upb_change = F.col("current_actual_upb") - F.col("original_upb")
+
+    return df.select(
+        "*",
+        upb_change.alias("upb_change_from_origination"),
+        F.when(
+            F.col("original_upb").isNull(),
+            F.lit(None).cast("double"),
+        )
+        .when(
+            F.col("original_upb") == 0,
+            F.lit(None).cast("double"),
+        )
+        .otherwise(upb_change / F.col("original_upb"))
+        .alias("upb_pct_change_from_origination"),
+        (F.col("current_interest_rate") - F.col("original_interest_rate")).alias(
+            "rate_change_from_origination"
+        ),
+    )
+
+
+# ----------------------------------------------------------------------
 # Optimized complete behavioral feature population
 # ----------------------------------------------------------------------
 
@@ -209,6 +703,7 @@ def build_behavioral_features_spark(
         - UPB composition
         - DDLPI / payment recency
         - UPB/rate trajectory
+        - delinquency trajectory / drift
 
     All history is calculated through and including the observation row.
 
@@ -570,6 +1065,12 @@ def build_behavioral_features_spark(
     )
 
     # ------------------------------------------------------------------
+    # Delinquency trajectory / drift.
+    # ------------------------------------------------------------------
+
+    working = add_delinquency_trajectory_features_spark(working)
+
+    # ------------------------------------------------------------------
     # Final point-in-time population.
     # ------------------------------------------------------------------
 
@@ -611,171 +1112,3 @@ def build_behavioral_features_spark(
     )
 
     return behavioral_features
-
-
-# ----------------------------------------------------------------------
-# Lifecycle clock
-# ----------------------------------------------------------------------
-
-
-def add_calculated_loan_age_spark(
-    df: DataFrame,
-) -> DataFrame:
-    """
-    Calculate loan age from the canonical monthly Period[M] ordinal.
-
-    Pandas reads the Parquet fields as Period[M], e.g.:
-
-        2015-05
-
-    Spark reads the underlying monthly ordinal, e.g.:
-
-        544
-
-    The Pandas calculation:
-
-        months(period - first_payment_date) + 1
-
-    is therefore equivalent to:
-
-        period - first_payment_date + 1
-    """
-
-    _validate_required_columns(
-        df,
-        {
-            "period",
-            "first_payment_date",
-        },
-        "calculated loan age",
-    )
-
-    return df.withColumn(
-        "calculated_loan_age",
-        (F.col("period") - F.col("first_payment_date") + F.lit(1)).cast("int"),
-    )
-
-
-# ----------------------------------------------------------------------
-# Historical feature helper
-# ----------------------------------------------------------------------
-
-
-def add_behavioral_history_features_spark(
-    df: DataFrame,
-) -> DataFrame:
-    """
-    Add leakage-safe historical behavioral features.
-
-    This standalone function remains available for callers that need
-    only the historical feature layer.
-
-    The complete production behavioral pipeline uses the fused
-    implementation in build_behavioral_features_spark() to avoid
-    calculating the same windows twice.
-    """
-
-    _validate_required_columns(
-        df,
-        {
-            "loan_id",
-            "calculated_loan_age",
-            "current_loan_delinquency_status",
-        },
-        "behavioral history features",
-    )
-
-    current_dpd_numeric = F.expr("try_cast(current_loan_delinquency_status as double)")
-
-    result = df.select(
-        "*",
-        *_current_dpd_expressions(),
-    )
-
-    history_window = (
-        Window.partitionBy("loan_id")
-        .orderBy(F.col("calculated_loan_age").asc())
-        .rowsBetween(
-            Window.unboundedPreceding,
-            Window.currentRow,
-        )
-    )
-
-    result = result.select(
-        "*",
-        F.max(F.col("current_dpd_numeric"))
-        .over(history_window)
-        .alias("max_dpd_to_date"),
-        F.max(F.col("current_dpd_30_plus"))
-        .over(history_window)
-        .cast("byte")
-        .alias("ever_30dpd_to_date"),
-        F.max(F.col("current_dpd_60_plus"))
-        .over(history_window)
-        .cast("byte")
-        .alias("ever_60dpd_to_date"),
-        F.sum(F.col("current_delinquency_flag"))
-        .over(history_window)
-        .cast("short")
-        .alias("delinquency_months_to_date"),
-        F.max(
-            F.when(
-                F.col("current_delinquency_flag") == 1,
-                F.col("calculated_loan_age"),
-            )
-        )
-        .over(history_window)
-        .alias("_last_delinquency_age"),
-    )
-
-    return result.withColumn(
-        "months_since_last_delinquency",
-        F.when(
-            F.col("_last_delinquency_age").isNull(),
-            F.lit(None).cast("double"),
-        ).otherwise(F.col("calculated_loan_age") - F.col("_last_delinquency_age")),
-    ).drop("_last_delinquency_age")
-
-
-# ----------------------------------------------------------------------
-# Loan trajectory helper
-# ----------------------------------------------------------------------
-
-
-def add_loan_trajectory_features_spark(
-    df: DataFrame,
-) -> DataFrame:
-    """
-    Add post-origination loan trajectory features.
-    """
-
-    _validate_required_columns(
-        df,
-        {
-            "original_upb",
-            "current_actual_upb",
-            "original_interest_rate",
-            "current_interest_rate",
-        },
-        "loan trajectory features",
-    )
-
-    upb_change = F.col("current_actual_upb") - F.col("original_upb")
-
-    return df.select(
-        "*",
-        upb_change.alias("upb_change_from_origination"),
-        F.when(
-            F.col("original_upb").isNull(),
-            F.lit(None).cast("double"),
-        )
-        .when(
-            F.col("original_upb") == 0,
-            F.lit(None).cast("double"),
-        )
-        .otherwise(upb_change / F.col("original_upb"))
-        .alias("upb_pct_change_from_origination"),
-        (F.col("current_interest_rate") - F.col("original_interest_rate")).alias(
-            "rate_change_from_origination"
-        ),
-    )
