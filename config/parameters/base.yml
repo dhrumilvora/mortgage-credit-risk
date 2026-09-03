@@ -140,7 +140,7 @@ parameters:
     # Model algorithm
     # ----------------------------------------------------------
 
-    algorithm: logistic_regression
+    algorithm: xgboost
 
     lightgbm:
       n_estimators: 300
@@ -214,12 +214,12 @@ parameters:
 
     model:
       version: test_unbalanced_quarterly
-      type: logistic_regression
+      type: xgboost
 
     threshold_selection:
       enabled: true
       optimisation_metric: f1
-      candidate_thresholds_range: [ 0.01, 0.7 ]
+      candidate_thresholds_range: [ 0.01, 0.3 ]
       candidate_thresholds_step: 0.01
     datasets:
       validation: true
@@ -247,7 +247,7 @@ parameters:
     # ----------------------------------------------------------
 
     calibration:
-      method: platt
+      method: beta
       bins:
       - [ 0.00, 0.01 ]
       - [ 0.01, 0.02 ]

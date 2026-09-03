@@ -125,12 +125,14 @@ def fit_calibration_beta(
 
     a, b, c = result.x
 
-    return BetaCalibrator(
-        a=float(a),
-        b=float(b),
-        c=float(c),
-    )
-
+    a, b, c = result.x
+    
+    calibrator = BetaCalibrator()
+    calibrator.a_ = float(a)
+    calibrator.b_ = float(b)
+    calibrator.c_ = float(c)
+    
+    return calibrator
 
 def fit_calibration(
     y_true: pd.Series | np.ndarray,
@@ -208,9 +210,9 @@ def apply_calibration_beta(
     clipped_proba = np.clip(y_proba, eps, 1.0 - eps)
 
     logits = (
-        calibrator.a * np.log(clipped_proba)
-        + calibrator.b * np.log1p(-clipped_proba)
-        + calibrator.c
+        calibrator.a_ * np.log(clipped_proba)
+        + calibrator.b_ * np.log1p(-clipped_proba)
+        + calibrator.c_
     )
 
     return np.asarray(expit(logits), dtype=float)
@@ -467,7 +469,6 @@ def calculate_calibration_summary(
 
         thresholds = getattr(calibration_model, "X_thresholds_", None)
         calibrated_values = getattr(calibration_model, "y_thresholds_", None)
-
         return {
             "calibration_method": "isotonic",
             "n_thresholds": int(len(thresholds)) if thresholds is not None else None,
@@ -482,5 +483,20 @@ def calculate_calibration_summary(
                 else None
             ),
         }
+        
+        
+    if method == "beta":
+        if not isinstance(calibration_model, BetaCalibrator):
+            raise TypeError(
+        "Beta calibration requires a BetaCalibrator calibrator."
+    )
+
+        return {
+        "calibration_method": "beta",
+        "a": float(calibration_model.a_),
+        "b": float(calibration_model.b_),
+        "c": float(calibration_model.c_),
+    }
+
 
     raise ValueError(f"Unknown calibration method: {method}")
