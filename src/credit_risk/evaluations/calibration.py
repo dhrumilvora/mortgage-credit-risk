@@ -10,7 +10,10 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, log_loss
 
 logger = logging.getLogger(__name__)
-
+import numpy as np
+from scipy.optimize import minimize
+from scipy.special import expit
+from sklearn.base import BaseEstimator, ClassifierMixin
 
 # ---------------------------------------------------------------------
 # Validation
@@ -91,6 +94,44 @@ def fit_calibration_platt(
     return calibrator
 
 
+def fit_calibration_beta(
+    y_true: pd.Series | np.ndarray,
+    y_proba: np.ndarray,
+) -> BetaCalibrator:
+    y_true, y_proba = _validate_calibration_inputs(y_true, y_proba)
+
+    eps = np.finfo(float).eps
+    clipped_proba = np.clip(y_proba, eps, 1.0 - eps)
+
+    log_proba = np.log(clipped_proba)
+    log_one_minus_proba = np.log1p(-clipped_proba)
+
+    def objective(params: np.ndarray) -> float:
+        a, b, c = params
+
+        logits = a * log_proba + b * log_one_minus_proba + c
+
+        # Numerically stable binary log-loss
+        return float(np.mean(np.logaddexp(0.0, logits) - y_true * logits))
+
+    result = minimize(
+        objective,
+        x0=np.array([1.0, 1.0, 0.0]),
+        method="L-BFGS-B",
+    )
+
+    if not result.success:
+        raise RuntimeError(f"Beta calibration failed: {result.message}")
+
+    a, b, c = result.x
+
+    return BetaCalibrator(
+        a=float(a),
+        b=float(b),
+        c=float(c),
+    )
+
+
 def fit_calibration(
     y_true: pd.Series | np.ndarray,
     y_proba: np.ndarray,
@@ -103,6 +144,8 @@ def fit_calibration(
 
     if method == "platt":
         return fit_calibration_platt(y_true, y_proba)
+    if method == "beta":
+        return fit_calibration_beta(y_true, y_proba)
 
     raise ValueError(f"Unknown calibration method: {method}")
 
@@ -149,6 +192,30 @@ def apply_calibration_platt(
     )
 
 
+def apply_calibration_beta(
+    y_proba: np.ndarray,
+    calibrator: BetaCalibrator,
+) -> np.ndarray:
+    y_proba = np.asarray(y_proba, dtype=float)
+
+    if not np.isfinite(y_proba).all():
+        raise ValueError("Predicted probabilities contain non-finite values.")
+
+    if ((y_proba < 0) | (y_proba > 1)).any():
+        raise ValueError("Predicted probabilities must be between 0 and 1.")
+
+    eps = np.finfo(float).eps
+    clipped_proba = np.clip(y_proba, eps, 1.0 - eps)
+
+    logits = (
+        calibrator.a * np.log(clipped_proba)
+        + calibrator.b * np.log1p(-clipped_proba)
+        + calibrator.c
+    )
+
+    return np.asarray(expit(logits), dtype=float)
+
+
 def apply_calibration(
     y_proba: np.ndarray,
     calibration_model,
@@ -161,6 +228,8 @@ def apply_calibration(
 
     if method == "platt":
         return apply_calibration_platt(y_proba, calibration_model)
+    if method == "beta":
+        return apply_calibration_beta(y_proba, calibration_model)
 
     raise ValueError(f"Unknown calibration method: {method}")
 
@@ -246,6 +315,87 @@ def calculate_calibration_metrics(
 # ---------------------------------------------------------------------
 # Generic calibration statistics
 # ---------------------------------------------------------------------
+
+
+class BetaCalibrator(BaseEstimator, ClassifierMixin):
+    """Beta calibration model."""
+
+    def __init__(self):
+        self.a_: float | None = None
+        self.b_: float | None = None
+        self.c_: float | None = None
+
+    def fit(
+        self,
+        y_proba: np.ndarray,
+        y_true: np.ndarray,
+    ) -> "BetaCalibrator":
+        y_true = np.asarray(y_true, dtype=float)
+        y_proba = np.asarray(y_proba, dtype=float)
+
+        eps = np.finfo(float).eps
+        clipped_proba = np.clip(y_proba, eps, 1.0 - eps)
+
+        log_proba = np.log(clipped_proba)
+        log_one_minus_proba = np.log1p(-clipped_proba)
+
+        def objective(params: np.ndarray) -> float:
+            a, b, c = params
+
+            logits = a * log_proba + b * log_one_minus_proba + c
+
+            return float(np.mean(np.logaddexp(0.0, logits) - y_true * logits))
+
+        result = minimize(
+            objective,
+            x0=np.array([1.0, 1.0, 0.0]),
+            method="L-BFGS-B",
+        )
+
+        if not result.success:
+            raise RuntimeError(f"Beta calibration failed: {result.message}")
+
+        self.a_, self.b_, self.c_ = result.x
+
+        return self
+
+    def predict_proba(
+        self,
+        y_proba: np.ndarray,
+    ) -> np.ndarray:
+        y_proba = np.asarray(y_proba, dtype=float)
+
+        if not np.isfinite(y_proba).all():
+            raise ValueError("Predicted probabilities contain non-finite values.")
+
+        if ((y_proba < 0) | (y_proba > 1)).any():
+            raise ValueError("Predicted probabilities must be between 0 and 1.")
+
+        if self.a_ is None:
+            raise RuntimeError("Beta calibrator has not been fitted.")
+
+        eps = np.finfo(float).eps
+        clipped_proba = np.clip(
+            y_proba,
+            eps,
+            1.0 - eps,
+        )
+
+        logits = (
+            self.a_ * np.log(clipped_proba)
+            + self.b_ * np.log1p(-clipped_proba)
+            + self.c_
+        )
+
+        calibrated = expit(logits)
+
+        return np.column_stack([1.0 - calibrated, calibrated])
+
+    def predict(
+        self,
+        y_proba: np.ndarray,
+    ) -> np.ndarray:
+        return self.predict_proba(y_proba)[:, 1]
 
 
 def calculate_calibration_statistics(
