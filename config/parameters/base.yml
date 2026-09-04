@@ -107,9 +107,9 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: true
+    skip: false
     use_existing_splits: true
-    version: test_unbalanced_quarterly
+    version: gam_with_interactions
 
     # ----------------------------------------------------------
     # Training / OOT vintage split
@@ -212,7 +212,14 @@ parameters:
           # - dpd_trend_6m
           # - dpd_acceleration_6m
           # - dpd_severity_change_6m
-
+        interactions:
+            enabled: true
+            pairs:
+              - [credit_score, estimated_ltv]
+              - [credit_score, modification_flag]
+              - [estimated_ltv, occupancy_status]
+              - [dpd_trend_6m, property_type]
+              - [dpd_acceleration_6m, dp_severity_change_6m]
   # ============================================================
   # COMMON TARGET DEFINITIONS
   # ============================================================
@@ -235,7 +242,7 @@ parameters:
     mode: same_run
 
     model:
-      version: test_unbalanced_quarterly
+      version: gam_with_interactions
       type: gam
 
     threshold_selection:

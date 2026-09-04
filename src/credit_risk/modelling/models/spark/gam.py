@@ -12,7 +12,7 @@ The complete model is one Spark PipelineModel. Preprocessing, fitted
 spline knots, feature assembly, and logistic-regression coefficients are
 therefore persisted with the PipelineModel.
 
-V1 deliberately contains NO interaction terms.
+V1 behavior is preserved when interactions are disabled.
 """
 
 from __future__ import annotations
@@ -46,6 +46,250 @@ class GAMSplineSpec:
     knots: list[float]
     lower_bound: float
     upper_bound: float
+
+@dataclass
+class GAMInteractionSpec:
+    left: str
+    right: str
+    interaction_type:str
+    
+def _resolve_interaction_type(
+    left: str,
+    right: str,
+    numerical_features: set[str],
+    categorical_features: set[str],
+) -> str:
+
+    left_type = "numeric" if left in numerical_features else "categorical"
+    right_type = "numeric" if right in numerical_features else "categorical"
+
+    if left_type == "categorical" and right_type == "categorical":
+        raise ValueError(
+            f"Categorical × categorical interactions are not supported: "
+            f"'{left}' × '{right}'."
+        )
+
+    if left_type == "numeric" and right_type == "numeric":
+        return "numeric_numeric"
+
+    return "numeric_categorical"
+
+
+def _get_gam_interaction_specs(
+    config: dict,
+) -> list[GAMInteractionSpec]:
+    """Read and validate configured GAM interactions."""
+
+    features = config["parameters"]["modelling"]["features"]
+
+    numerical_features = set(
+        features.get("numerical_features", [])
+    )
+    categorical_features = set(
+        features.get("categorical_features", [])
+    )
+    all_features = numerical_features | categorical_features
+
+    gam_config = config[
+        "parameters"
+    ][
+        "modelling"
+    ][
+        "gam"
+    ]
+
+    interaction_config = gam_config.get(
+        "interactions",
+        {},
+    )
+
+    if not interaction_config.get("enabled", False):
+        return []
+
+    pairs = interaction_config.get("pairs", [])
+
+    if not isinstance(pairs, list):
+        raise ValueError(
+            "GAM interactions.pairs must be a list."
+        )
+
+    specs: list[GAMInteractionSpec] = []
+    seen_pairs: set[frozenset[str]] = set()
+
+    # Interaction numeric features reuse the existing main-effect spline
+    # basis, so every numeric side must already be configured as a spline.
+    spline_features = set(
+        gam_config.get(
+            "feature_transform",
+            {},
+        ).get(
+            "spline",
+            [],
+        )
+    )
+
+    for pair in pairs:
+
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise ValueError(
+                "Each GAM interaction must contain exactly "
+                "two feature names."
+            )
+
+        left, right = pair
+
+        if not isinstance(left, str) or not isinstance(right, str):
+            raise ValueError(
+                "GAM interaction feature names must be strings."
+            )
+
+        if left == right:
+            raise ValueError(
+                f"Self-interaction is not supported: '{left}'."
+            )
+
+        unknown = sorted(
+            {
+                feature
+                for feature in (left, right)
+                if feature not in all_features
+            }
+        )
+
+        if unknown:
+            raise ValueError(
+                "GAM interaction contains unknown features: "
+                + ", ".join(unknown)
+            )
+
+        pair_key = frozenset((left, right))
+
+        if pair_key in seen_pairs:
+            raise ValueError(
+                f"Duplicate GAM interaction: "
+                f"'{left}' × '{right}'."
+            )
+
+        seen_pairs.add(pair_key)
+
+        interaction_type = _resolve_interaction_type(
+            left=left,
+            right=right,
+            numerical_features=numerical_features,
+            categorical_features=categorical_features,
+        )
+
+        numeric_features_in_pair = [
+            feature
+            for feature in (left, right)
+            if feature in numerical_features
+        ]
+
+        missing_spline_features = sorted(
+            set(numeric_features_in_pair) - spline_features
+        )
+
+        if missing_spline_features:
+            raise ValueError(
+                "Numeric features used in GAM interactions must also "
+                "be configured as spline features: "
+                + ", ".join(missing_spline_features)
+            )
+
+        specs.append(
+            GAMInteractionSpec(
+                left=left,
+                right=right,
+                interaction_type=interaction_type,
+            )
+        )
+
+    return specs
+
+
+def _bspline_interaction_expression(
+    left: Column,
+    right: Column,
+    left_knots: list[float],
+    right_knots: list[float],
+    degree: int,
+    left_basis_index: int,
+    right_basis_index: int,
+) -> Column:
+    """Build one tensor-product B-spline interaction basis."""
+
+    left_basis = _bspline_basis_expression(
+        x=left,
+        knots=left_knots,
+        degree=degree,
+        basis_index=left_basis_index,
+    )
+
+    right_basis = _bspline_basis_expression(
+        x=right,
+        knots=right_knots,
+        degree=degree,
+        basis_index=right_basis_index,
+    )
+
+    return left_basis * right_basis
+
+
+def _encode_interaction_specs(
+    specs: list[GAMInteractionSpec],
+) -> str:
+    """Serialize validated interaction specifications to JSON."""
+
+    return json.dumps(
+        [asdict(spec) for spec in specs],
+        sort_keys=True,
+    )
+
+
+def _decode_interaction_specs(
+    value: str,
+) -> list[GAMInteractionSpec]:
+    """Deserialize interaction specifications."""
+
+    payload = json.loads(value)
+
+    if not isinstance(payload, list):
+        raise ValueError(
+            "Serialized GAM interaction specifications must be a list."
+        )
+
+    specs: list[GAMInteractionSpec] = []
+
+    for data in payload:
+
+        if not isinstance(data, dict):
+            raise ValueError(
+                "Invalid GAM interaction specification."
+            )
+
+        required_fields = {
+            "left",
+            "right",
+            "interaction_type",
+        }
+
+        missing = required_fields - set(data)
+
+        if missing:
+            raise ValueError(
+                "GAM interaction specification is missing: "
+                + ", ".join(sorted(missing))
+            )
+
+        specs.append(
+            GAMInteractionSpec(
+                left=str(data["left"]),
+                right=str(data["right"]),
+                interaction_type=str(data["interaction_type"]),
+            )
+        )
+
+    return specs
 
 
 # ======================================================================
