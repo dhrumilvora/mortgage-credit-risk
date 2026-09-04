@@ -199,5 +199,13 @@ def train_model_spark(
             train_xgb,
             config,
         )
+    elif algorithm == "gam":
+
+        from credit_risk.modelling.models.spark.gam import train_gam_spark
+
+        return train_gam_spark(
+            training_df,
+            config,
+        )
 
     raise ValueError(f"Unsupported modelling algorithm: {algorithm}")
