@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from time import perf_counter
 
 import pandas as pd
@@ -16,20 +15,14 @@ from credit_risk.features.behavioral_spark import (
     add_calculated_loan_age_spark,
     build_behavioral_features_spark,
 )
-from credit_risk.features.eligibility_origination import (
-    validate_baseline_features,
-)
-from credit_risk.features.eligibility_performance import (
-    BASELINE_FEATURES,
-    CHALLENGER_FEATURES,
-    IDENTIFIER_FIELDS,
-    STATE_FIELDS,
-    TERMINATION_FIELDS,
-    TIME_FIELDS,
-    validate_features,
-)
+
+
 from credit_risk.features.origination_spark import (
     build_origination_spark,
+)
+
+from credit_risk.features.performance_spark import (
+    build_performance_spark,
 )
 from credit_risk.target.behavioral import (
     build_behavioral_target,
@@ -54,47 +47,6 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 
 
-def build_origination(
-    df: pd.DataFrame,
-    config: dict,
-) -> pd.DataFrame:
-    """Apply finalized origination preprocessing."""
-
-    validate_baseline_features(
-        df.columns,
-        config,
-    )
-
-    result = origination.select_baseline_features(
-        df,
-        config,
-    )
-
-    result = origination.normalize_sentinel_values(
-        result,
-    )
-
-    result = origination.add_missing_indicators(
-        result,
-    )
-
-    return result
-
-
-def build_performance(
-    df: pd.DataFrame,
-) -> pd.DataFrame:
-    """Apply finalized performance preprocessing."""
-
-    validate_features(
-        df.columns,
-    )
-
-    return performance.select_baseline_features(
-        df,
-    )
-
-
 def build_master_dataset(
     origination_df: pd.DataFrame,
     performance_df: pd.DataFrame,
@@ -110,57 +62,6 @@ def build_master_dataset(
         on="loan_id",
         how="inner",
         validate="many_to_one",
-    )
-
-
-# ----------------------------------------------------------------------
-# Spark performance preprocessing
-# ----------------------------------------------------------------------
-
-
-def select_baseline_features_spark(
-    df: DataFrame,
-) -> DataFrame:
-    """
-    Select the exact same performance columns as the Pandas
-    select_baseline_features() implementation.
-    """
-
-    columns = (
-        IDENTIFIER_FIELDS
-        + TIME_FIELDS
-        + BASELINE_FEATURES
-        + STATE_FIELDS
-        + CHALLENGER_FEATURES
-        + TERMINATION_FIELDS
-    )
-
-    missing_columns = sorted(
-        set(columns) - set(df.columns),
-    )
-
-    if missing_columns:
-        raise ValueError(
-            "Missing required performance fields: " + ", ".join(missing_columns)
-        )
-
-    return df.select(
-        *columns,
-    )
-
-
-def build_performance_spark(
-    df: DataFrame,
-) -> DataFrame:
-    """
-    Apply finalized performance preprocessing using Spark.
-
-    The current performance preprocessing contract consists only of
-    selecting the configured baseline columns.
-    """
-
-    return select_baseline_features_spark(
-        df,
     )
 
 
@@ -256,12 +157,12 @@ def build_modelling_dataset_origination_pandas(
             performance_path,
         )
 
-        origination_features = build_origination(
+        origination_features = origination.build_origination(
             origination_df,
             config,
         )
 
-        performance_features = build_performance(
+        performance_features = performance.build_performance(
             performance_df,
         )
 
@@ -382,7 +283,7 @@ def build_modelling_dataset_behavioral_pandas(
             performance_path,
         )
 
-        origination_features = build_origination(
+        origination_features = origination.build_origination(
             origination_df,
             config,
         )
@@ -403,7 +304,7 @@ def build_modelling_dataset_behavioral_pandas(
             validate="one_to_one",
         )
 
-        performance_features = build_performance(
+        performance_features = performance.build_performance(
             performance_df,
         )
 

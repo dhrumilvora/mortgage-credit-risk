@@ -207,5 +207,6 @@ def train_model_spark(
             training_df,
             config,
         )
+        
 
     raise ValueError(f"Unsupported modelling algorithm: {algorithm}")
