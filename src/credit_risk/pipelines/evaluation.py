@@ -100,10 +100,12 @@ def evaluate_split(
         # preprocessor.transform() returns the Spark ML feature vector
         # in the "features" column.
         # -------------------------------------------------------------
-
-        X_transformed = preprocessor.transform(
-            X,
-        )
+        
+        X_transformed = (
+    X
+    if config["parameters"]["modelling"]["algorithm"] == "gam"
+    else preprocessor.transform(X)
+)
 
         # -------------------------------------------------------------
         # Generate Spark predictions.

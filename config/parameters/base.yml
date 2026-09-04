@@ -12,7 +12,7 @@ parameters:
 
   spark:
     master: local[*]
-    driver_memory: 56g
+    driver_memory: 80g
     shuffle_partitions: 512
 
   # ============================================================
@@ -107,7 +107,7 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: false
+    skip: true
     use_existing_splits: true
     version: test_unbalanced_quarterly
 
@@ -199,21 +199,19 @@ parameters:
 
       feature_transform:
         default_numerical: linear
-
         spline:
-        - credit_score
-        - original_dti
-        - original_ltv
-        - original_cltv
-        - estimated_ltv
-        - current_interest_rate
-        # - calculated_loan_age
-        - remaining_months_to_legal_maturity
-        - upb_pct_change_from_origination
-        - rate_change_from_origination
-        - dpd_trend_6m
-        - dpd_acceleration_6m
-        - dpd_severity_change_6m
+          - credit_score
+          - original_dti
+          - original_ltv
+          - original_cltv
+          - estimated_ltv
+          - current_interest_rate
+          - current_actual_upb
+          - remaining_months_to_legal_maturity
+          # - upb_pct_change_from_origination
+          # - dpd_trend_6m
+          # - dpd_acceleration_6m
+          # - dpd_severity_change_6m
 
   # ============================================================
   # COMMON TARGET DEFINITIONS
@@ -234,11 +232,11 @@ parameters:
 
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run
-    mode: existing_model
+    mode: same_run
 
     model:
       version: test_unbalanced_quarterly
-      type: xgboost
+      type: gam
 
     threshold_selection:
       enabled: true

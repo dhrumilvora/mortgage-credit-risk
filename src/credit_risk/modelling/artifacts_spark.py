@@ -296,6 +296,13 @@ def load_spark_model_artifacts(
 
         model_loader = SparkXGBClassifierModel
 
+    elif model_type == "gam":
+
+        # GAM is saved as a complete Spark PipelineModel:
+        # preparation -> spline transformation ->
+        # vector assembly -> logistic regression.
+        model_loader = PipelineModel
+
     elif model_type == "lightgbm":
 
         raise NotImplementedError(
@@ -303,7 +310,9 @@ def load_spark_model_artifacts(
         )
 
     else:
-        raise ValueError(f"Unsupported Spark modelling algorithm: {model_type}")
+        raise ValueError(
+            f"Unsupported Spark modelling algorithm: {model_type}"
+        )
 
     model = _load_spark_artifact(
         model_loader,
@@ -311,7 +320,6 @@ def load_spark_model_artifacts(
     )
 
     return model, preprocessor
-
 
 def load_training_config_spark(
     config: dict,
