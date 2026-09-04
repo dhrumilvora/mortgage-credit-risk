@@ -107,7 +107,7 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: true
+    skip: false
     use_existing_splits: true
     version: test_unbalanced_quarterly
 
@@ -207,7 +207,7 @@ parameters:
         - original_cltv
         - estimated_ltv
         - current_interest_rate
-        - calculated_loan_age
+        # - calculated_loan_age
         - remaining_months_to_legal_maturity
         - upb_pct_change_from_origination
         - rate_change_from_origination

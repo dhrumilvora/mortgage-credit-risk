@@ -26,15 +26,17 @@ def normalize_sentinel_values_spark(
     result = df
 
     for column, sentinel in NUMERIC_SENTINELS.items():
-
+    
         if column not in result.columns:
             continue
-
+    
+        column_type = result.schema[column].dataType
+    
         result = result.withColumn(
             column,
             F.when(
-                F.col(column) == F.lit(sentinel),
-                F.lit(None),
+                F.col(column) == F.lit(sentinel).cast(column_type),
+                F.lit(None).cast(column_type),
             ).otherwise(
                 F.col(column),
             ),

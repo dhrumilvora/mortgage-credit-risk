@@ -74,16 +74,19 @@ def _prepare_training_data_spark(
     # --------------------------------------------------------------
 
     if algorithm == "gam":
-
-        feature_columns = [
-            column for column in X_train.columns if column not in join_keys
-        ]
-
+    
+        features = config["parameters"]["modelling"]["features"]
+    
+        feature_columns = (
+            features.get("numerical_features", [])
+            + features.get("categorical_features", [])
+            + features.get("engineered_features", [])
+        )
+    
         return joined_df.select(
             *feature_columns,
             "label",
         )
-
     # --------------------------------------------------------------
     # Existing models receive the assembled feature vector.
     # --------------------------------------------------------------

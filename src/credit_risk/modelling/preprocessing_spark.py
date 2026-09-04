@@ -291,10 +291,11 @@ def transform_with_preprocessor_spark(
     preprocessor_model: PipelineModel,
     config: dict,
 ) -> DataFrame:
-    """
-    Prepare and transform data using a previously fitted
-    Spark preprocessing PipelineModel.
-    """
+
+    algorithm = config["parameters"]["modelling"]["algorithm"]
+
+    if algorithm == "gam":
+        return X
 
     X_prepared = prepare_features_spark(
         X,
