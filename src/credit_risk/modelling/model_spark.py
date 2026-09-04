@@ -12,6 +12,7 @@ def _prepare_training_data_spark(
 
     approach = config["parameters"]["modelling_approach"]
     target = config["parameters"]["target"]["name"]
+    algorithm = config["parameters"]["modelling"]["algorithm"]
 
     # --------------------------------------------------------------
     # Determine natural modelling grain
@@ -59,23 +60,45 @@ def _prepare_training_data_spark(
     # Join
     # --------------------------------------------------------------
 
-    training_df = X_train.join(
+    joined_df = X_train.join(
         target_df,
         on=join_keys,
         how="inner",
-    ).select(
+    )
+
+    # --------------------------------------------------------------
+    # GAM requires the individually transformed feature columns.
+    #
+    # The GAM spline transformation happens after preprocessing,
+    # before final VectorAssembler.
+    # --------------------------------------------------------------
+
+    if algorithm == "gam":
+
+        feature_columns = [
+            column for column in X_train.columns if column not in join_keys
+        ]
+
+        return joined_df.select(
+            *feature_columns,
+            "label",
+        )
+
+    # --------------------------------------------------------------
+    # Existing models receive the assembled feature vector.
+    # --------------------------------------------------------------
+
+    return joined_df.select(
         "features",
         "label",
     )
-
-    return training_df
 
 
 def train_model_spark(
     X_train: DataFrame,
     y_train: DataFrame,
-    X_val:DataFrame,
-    y_val:DataFrame,
+    X_val: DataFrame,
+    y_val: DataFrame,
     config: dict,
 ):
     algorithm = config["parameters"]["modelling"]["algorithm"]
@@ -107,10 +130,7 @@ def train_model_spark(
         y_train,
         config,
     )
-    val_df = _prepare_training_data_spark(
-        X_val,
-        y_val,config
-    )
+    val_df = _prepare_training_data_spark(X_val, y_val, config)
     # --------------------------------------------------------------
     # Materialize ONCE.
     #
@@ -141,7 +161,6 @@ def train_model_spark(
     # Train model
     # --------------------------------------------------------------
 
-
     if algorithm == "logistic_regression":
 
         from credit_risk.modelling.models.spark.logistic_regression import (
@@ -163,18 +182,15 @@ def train_model_spark(
             training_df,
             config,
         )
-        
+
     elif algorithm == "xgboost":
 
         from credit_risk.modelling.models.spark.xgboost import (
             train_xgboost_spark,
         )
-        train_xgb = (
-        training_df
-        .withColumn("is_validation", F.lit(False))
-        .unionByName(
+
+        train_xgb = training_df.withColumn("is_validation", F.lit(False)).unionByName(
             val_df.withColumn("is_validation", F.lit(True))
-        )
         )
 
         del training_df
@@ -185,4 +201,3 @@ def train_model_spark(
         )
 
     raise ValueError(f"Unsupported modelling algorithm: {algorithm}")
-

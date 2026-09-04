@@ -127,6 +127,7 @@ def prepare_features_spark(
 
 def build_preprocessor_spark(
     config: dict,
+    assemble_features: bool = True,
 ) -> Pipeline:
     """
     Build the Spark preprocessing pipeline.
@@ -225,20 +226,34 @@ def build_preprocessor_spark(
 
     assembler_inputs = numerical_output_columns + encoded_columns + engineered_features
 
-    if not assembler_inputs:
-        raise ValueError(
-            "No modelling features configured. "
-            "At least one numerical, categorical, or "
-            "engineered feature is required."
+    # --------------------------------------------------------------
+    # Assemble final feature vector.
+    #
+    # GAM requires access to the individually transformed columns
+    # before final vector assembly so that spline basis expansion
+    # can be applied to numerical features.
+    # --------------------------------------------------------------
+
+    if assemble_features:
+
+        assembler_inputs = (
+            numerical_output_columns + encoded_columns + engineered_features
         )
 
-    stages.append(
-        VectorAssembler(
-            inputCols=assembler_inputs,
-            outputCol="features",
-            handleInvalid="keep",
+        if not assembler_inputs:
+            raise ValueError(
+                "No modelling features configured. "
+                "At least one numerical, categorical, or "
+                "engineered feature is required."
+            )
+
+        stages.append(
+            VectorAssembler(
+                inputCols=assembler_inputs,
+                outputCol="features",
+                handleInvalid="keep",
+            )
         )
-    )
 
     return Pipeline(
         stages=stages,
@@ -248,6 +263,7 @@ def build_preprocessor_spark(
 def fit_preprocessor_spark(
     X_train: DataFrame,
     config: dict,
+    assemble_features: bool = True,
 ) -> PipelineModel:
     """
     Prepare and fit the Spark preprocessing pipeline.
@@ -262,6 +278,7 @@ def fit_preprocessor_spark(
 
     preprocessor = build_preprocessor_spark(
         config,
+        assemble_features=assemble_features,
     )
 
     return preprocessor.fit(

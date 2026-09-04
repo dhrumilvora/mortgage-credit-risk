@@ -154,14 +154,12 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
     elif modelling_config["train_test_split"] == "yearly":
 
         development_vintages = (
-            modelling_config["vintages_train"]
-            + modelling_config["vintages_test"]
+            modelling_config["vintages_train"] + modelling_config["vintages_test"]
         )
 
     else:
         raise ValueError(
-            "Unsupported train_test_split: "
-            f"{modelling_config['train_test_split']}"
+            "Unsupported train_test_split: " f"{modelling_config['train_test_split']}"
         )
 
     oot_vintages = modelling_config["vintages_oot"]
@@ -213,9 +211,9 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
 
         step_start = perf_counter()
 
-        train_df = read_spark_parquet(spark,train_path)
-        validation_df = read_spark_parquet(spark,validation_path)
-        oot_df = read_spark_parquet(spark,oot_path)
+        train_df = read_spark_parquet(spark, train_path)
+        validation_df = read_spark_parquet(spark, validation_path)
+        oot_df = read_spark_parquet(spark, oot_path)
 
         logger.info(
             "Existing modelling splits loaded in %.2f seconds",
@@ -360,6 +358,7 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
     preprocessor_model = fit_preprocessor_spark(
         X_train,
         config,
+        assemble_features=modelling_config["algorithm"] != "gam",
     )
 
     logger.info(
@@ -386,8 +385,7 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
     )
 
     logger.info(
-        "Training and validation matrix transformations constructed "
-        "in %.2f seconds",
+        "Training and validation matrix transformations constructed " "in %.2f seconds",
         perf_counter() - step_start,
     )
 
@@ -416,9 +414,9 @@ def run_modelling_pipeline_pyspark(config: dict, spark) -> None:
     # EVENT RATE
     # ------------------------------------------------------------
 
-    event_rate = y_train.select(
-        F.avg(F.col(target)).alias("event_rate")
-    ).first()["event_rate"]
+    event_rate = y_train.select(F.avg(F.col(target)).alias("event_rate")).first()[
+        "event_rate"
+    ]
 
     # ------------------------------------------------------------
     # SAVE
