@@ -2217,9 +2217,9 @@ def build_gam_pipeline(
     """Build the complete representation-aware GAM V2 Spark Pipeline.
 
     Training-data screening is intentionally NOT a Pipeline stage.
-    ``train_gam_spark`` applies optional screening to the training DataFrame
-    before fitting. This guarantees that validation and OOT DataFrames are
-    transformed at their full size by the persisted PipelineModel.
+    ``train_gam_spark`` applies optional screening and class weighting to the
+    training DataFrame before fitting. This guarantees that validation and OOT
+    DataFrames are transformed at their full size by the persisted PipelineModel.
     """
 
     features = config["parameters"]["modelling"]["features"]
@@ -2249,9 +2249,13 @@ def build_gam_pipeline(
         config
     )
 
-    spline_config = (
-        config["parameters"]["modelling"]["gam"]["spline"]
+    gam_config = (
+        config["parameters"]
+        ["modelling"]
+        ["gam"]
     )
+
+    spline_config = gam_config["spline"]
 
     stages: list[Any] = _build_gam_preparation_stages(
         config
@@ -2294,18 +2298,37 @@ def build_gam_pipeline(
         )
     )
 
+    # ------------------------------------------------------------------
+    # Logistic regression / configurable class weighting
+    # ------------------------------------------------------------------
+
+    weighting_config = gam_config.get(
+        "class_weighting",
+        {},
+    )
+
+    logistic_regression_kwargs = {
+        "featuresCol": "features",
+        "labelCol": "label",
+    }
+
+    if weighting_config.get(
+        "enabled",
+        False,
+    ):
+        logistic_regression_kwargs["weightCol"] = (
+            "__class_weight__"
+        )
+
     stages.append(
         LogisticRegression(
-            featuresCol="features",
-            labelCol="label",
+            **logistic_regression_kwargs
         )
     )
 
     return Pipeline(
         stages=stages
     )
-
-
 def train_gam_spark(
     training_df: DataFrame,
     config: dict,
@@ -2313,8 +2336,11 @@ def train_gam_spark(
     """Train the GAM Spark Pipeline.
 
     Optional experiment screening is applied ONLY to ``training_df`` before
-    Pipeline.fit(). The resulting PipelineModel therefore transforms the
-    complete validation/OOT datasets without sampling them.
+    Pipeline.fit(). Optional class weighting is then applied to the screened
+    training population.
+
+    The resulting PipelineModel therefore transforms the complete
+    validation/OOT datasets without sampling or weighting them.
     """
 
     if "label" not in training_df.columns:
@@ -2331,6 +2357,11 @@ def train_gam_spark(
 
     experiment_config = gam_config.get(
         "experiment",
+        {},
+    )
+
+    weighting_config = gam_config.get(
+        "class_weighting",
         {},
     )
 
@@ -2356,11 +2387,50 @@ def train_gam_spark(
 
     fit_df = training_df
 
+    # Apply optional training-only screening.
     if screening_fraction < 1.0:
         fit_df = training_df.sample(
             withReplacement=False,
             fraction=screening_fraction,
             seed=screening_seed,
+        )
+
+    # Apply optional class weighting to the fitting population.
+    if weighting_config.get("enabled", False):
+        positive_weight = float(
+            weighting_config.get(
+                "positive_weight",
+                1.0,
+            )
+        )
+
+        negative_weight = float(
+            weighting_config.get(
+                "negative_weight",
+                1.0,
+            )
+        )
+
+        if positive_weight <= 0.0:
+            raise ValueError(
+                "gam.class_weighting.positive_weight "
+                "must be greater than 0."
+            )
+
+        if negative_weight <= 0.0:
+            raise ValueError(
+                "gam.class_weighting.negative_weight "
+                "must be greater than 0."
+            )
+
+        fit_df = fit_df.withColumn(
+            "__class_weight__",
+            F.when(
+                F.col("label") == 1,
+                F.lit(positive_weight),
+            ).otherwise(
+                F.lit(negative_weight)
+            ),
         )
 
     pipeline = build_gam_pipeline(
@@ -2370,5 +2440,3 @@ def train_gam_spark(
     return pipeline.fit(
         fit_df
     )
-
-

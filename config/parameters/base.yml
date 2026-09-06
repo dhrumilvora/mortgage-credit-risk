@@ -62,7 +62,7 @@ parameters:
       performance_workers: 8
 
     preprocess:
-      skip: false
+      skip: true
 
       # ----------------------------------------------------------
       # Macroeconomic features
@@ -120,9 +120,9 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: false
-    use_existing_splits: true
-    version: gam_macro
+    skip: true
+    use_existing_splits: false
+    version: gam_macro_weighted_semi_quarterly
 
     # ----------------------------------------------------------
     # Training / OOT vintage split
@@ -211,7 +211,10 @@ parameters:
     # ----------------------------------------------------------
 
     gam:
-
+      class_weighting:
+        enabled: false
+        positive_weight: 2.0
+        negative_weight: 1.0
       spline:
         degree: 3
         num_knots: 6
@@ -257,7 +260,11 @@ parameters:
           - months_since_last_30dpd
           - months_since_last_60dpd
           - delinquency_intensity_change_6m
-
+          # Macro-economic factors
+          - unemployment_rate
+          - mortgage_rate_30y
+          - hpi_purchase_only
+          - fed_funds_rate
       # ----------------------------------------------------------
       # Interactions
       # ----------------------------------------------------------
@@ -299,9 +306,6 @@ parameters:
           - [rate_change_from_origination, original_dti]
           - [rate_change_from_origination, estimated_ltv]
 
-          # Delinquency history × borrower quality
-          - [delinquency_episode_count, credit_score]
-          - [current_delinquency_streak, credit_score]
 
   # ============================================================
   # COMMON TARGET DEFINITIONS
@@ -319,19 +323,22 @@ parameters:
 
   evaluation:
     skip: false
-
+    grain: point_in_time   # point_in_time | loan_level
+    loan_level:
+     probability_aggregation: max
+     target_aggregation: max
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run
-    mode: existing_model
+    mode: same_run
 
     model:
-      version: gam_macro
+      version: gam_macro_weighted_semi_quarterly
       type: gam
 
     threshold_selection:
       enabled: true
       optimisation_metric: f1
-      candidate_thresholds_range: [0.01, 0.3]
+      candidate_thresholds_range: [0.01, 0.5]
       candidate_thresholds_step: 0.01
 
     datasets:
@@ -360,7 +367,7 @@ parameters:
     # ----------------------------------------------------------
 
     calibration:
-      method: beta
+      method: platt
       bins:
         - [0.00, 0.01]
         - [0.01, 0.02]

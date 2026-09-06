@@ -16,6 +16,7 @@ from credit_risk.features.behavioral_spark import (
     build_behavioral_features_spark,
 )
 
+from credit_risk.features.macro_economic import add_macro_economic_features
 
 from credit_risk.features.origination_spark import (
     build_origination_spark,
@@ -620,13 +621,7 @@ def build_modelling_dataset_behavioral_pyspark(config: dict, spark) -> None:
             master = add_calculated_loan_age_spark(
                 master,
             )
-            master.filter(F.col("calculated_loan_age").isin([6, 12])).agg(
-                F.count("*").alias("rows"),
-                F.count("ddlpi").alias("ddlpi_non_null"),
-                F.count("delinquent_accrued_interest").alias(
-                    "delinquent_accrued_interest_non_null"
-                ),
-            ).show()
+            master = add_macro_economic_features(master,config,spark)
 
             logger.info(
                 "Spark master transformation configured: " "vintage=%s columns=%s",

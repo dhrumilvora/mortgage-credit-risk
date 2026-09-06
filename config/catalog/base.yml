@@ -12,7 +12,7 @@ catalog:
 
   raw_macro_data:
     folder_name: "01_raw"
-    file_name: "us_macro_montly"
+    file_name: "us_macro_monthly"
     file_type: "csv"
 
   ## Intermediate Origination & Performance Files

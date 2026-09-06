@@ -39,6 +39,80 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------
+# Evaluation population aggregation
+# ---------------------------------------------------------------------
+
+
+def aggregate_evaluation_predictions(
+    predictions: pd.DataFrame,
+    config: dict,
+) -> pd.DataFrame:
+    """
+    Aggregate model predictions to the configured evaluation grain.
+
+    Point-in-time evaluation:
+        One row per loan_id × observation_age.
+
+    Loan-level evaluation:
+        One row per loan_id using configurable aggregations for the
+        target and predicted probability.
+
+    The underlying modelling population is not changed.
+    """
+
+    evaluation_config = config["parameters"]["evaluation"]
+    grain = evaluation_config.get("grain", "point_in_time")
+    
+    if grain == "point_in_time":
+        return predictions
+
+    if grain != "loan_level":
+        raise ValueError(
+            "Unsupported evaluation grain: "
+            f"{grain}. Expected 'point_in_time' or 'loan_level'."
+        )
+
+    loan_level_config = evaluation_config["loan_level"]
+
+    probability_aggregation = loan_level_config.get(
+        "probability_aggregation",
+        "max",
+    )
+    target_aggregation = loan_level_config.get(
+        "target_aggregation",
+        "max",
+    )
+
+    required_columns = {
+        "loan_id",
+        "target",
+        "__prediction_probability",
+    }
+
+    missing_columns = sorted(
+        required_columns - set(predictions.columns)
+    )
+
+    if missing_columns:
+        raise ValueError(
+            "Loan-level evaluation requires columns: "
+            + ", ".join(missing_columns)
+        )
+
+    return (
+        predictions
+        .groupby("loan_id", as_index=False)
+        .agg(
+            target=("target", target_aggregation),
+            __prediction_probability=(
+                "__prediction_probability",
+                probability_aggregation,
+            ),
+        )
+    )
+
+
+# ---------------------------------------------------------------------
 # Split evaluation
 # ---------------------------------------------------------------------
 
@@ -55,6 +129,10 @@ def evaluate_split(
     Generate predictions and evaluate a single dataset split.
 
     Prediction generation is engine-specific.
+
+    Evaluation can be performed at either:
+        - point_in_time: loan_id × observation_age
+        - loan_level: one row per loan_id
 
     All evaluation metrics remain Pandas-based so that the Pandas
     and PySpark engines use the same evaluation methodology.
@@ -82,6 +160,24 @@ def evaluate_split(
             threshold=threshold,
         )
 
+        prediction_pd = pd.DataFrame(
+            {
+                "target": y.to_numpy(),
+                "__prediction_probability": np.asarray(
+                    y_proba,
+                    dtype=float,
+                ),
+                "prediction": np.asarray(
+                    y_pred,
+                    dtype=int,
+                ),
+            }
+        )
+
+        # Retain identifiers for loan-level aggregation.
+        if "loan_id" in df.columns:
+            prediction_pd["loan_id"] = df["loan_id"].to_numpy()
+
     # -----------------------------------------------------------------
     # PySpark
     # -----------------------------------------------------------------
@@ -93,52 +189,17 @@ def evaluate_split(
             config,
         )
 
-        # -------------------------------------------------------------
-        # Apply the fitted Spark preprocessing pipeline.
-        #
-        # IMPORTANT:
-        # preprocessor.transform() returns the Spark ML feature vector
-        # in the "features" column.
-        # -------------------------------------------------------------
-        
+        # GAM already contains its complete Spark preprocessing
+        # pipeline. Do not apply the outer preprocessor again.
         X_transformed = (
-    X
-    if config["parameters"]["modelling"]["algorithm"] == "gam"
-    else preprocessor.transform(X)
-)
-
-        # -------------------------------------------------------------
-        # Generate Spark predictions.
-        #
-        # Spark ML binary classifiers generally produce:
-        #
-        #     prediction
-        #     probability
-        #
-        # where probability is a Spark Vector UDT.
-        # -------------------------------------------------------------
+            X
+            if config["parameters"]["modelling"]["algorithm"] == "gam"
+            else preprocessor.transform(X)
+        )
 
         predictions = model.transform(
             X_transformed,
         )
-
-        # -------------------------------------------------------------
-        # Convert Spark ML Vector -> Spark Array.
-        #
-        # probability is NOT a normal Spark array. Therefore:
-        #
-        #     probability[1]
-        #
-        # causes:
-        #
-        #     INVALID_EXTRACT_BASE_FIELD_TYPE
-        #
-        # vector_to_array() converts:
-        #
-        #     [P(0), P(1)]
-        #
-        # into an actual Spark array.
-        # -------------------------------------------------------------
 
         predictions = predictions.withColumn(
             "__prediction_probability",
@@ -146,10 +207,6 @@ def evaluate_split(
                 "probability",
             )[1],
         )
-
-        # -------------------------------------------------------------
-        # Validate prediction columns.
-        # -------------------------------------------------------------
 
         required_prediction_columns = {
             "prediction",
@@ -167,39 +224,43 @@ def evaluate_split(
             )
 
         # -------------------------------------------------------------
-        # Collect ONLY predictions.
-        #
-        # We deliberately do not convert X_transformed to Pandas.
-        #
-        # The large feature matrix remains in Spark.
+        # Collect only prediction-related columns.
         # -------------------------------------------------------------
 
-        prediction_pd = predictions.select(
+        prediction_columns = [
             "prediction",
             "__prediction_probability",
-        ).toPandas()
+        ]
+
+        if "loan_id" in predictions.columns:
+            prediction_columns.append("loan_id")
+
+        prediction_pd = (
+            predictions
+            .select(*prediction_columns)
+            .toPandas()
+        )
 
         y_pred = prediction_pd["prediction"].to_numpy().astype(int)
 
-        y_proba = prediction_pd["__prediction_probability"].to_numpy().astype(float)
+        y_proba = (
+            prediction_pd["__prediction_probability"]
+            .to_numpy()
+            .astype(float)
+        )
 
         # -------------------------------------------------------------
-        # Collect ONLY the target.
+        # Collect target.
         # -------------------------------------------------------------
 
         target = config["parameters"]["target"]["name"]
 
         y = (
-            y.select(
-                target,
-            )
+            y
+            .select(target)
             .toPandas()
             .iloc[:, 0]
         )
-
-        # -------------------------------------------------------------
-        # Validate row alignment.
-        # -------------------------------------------------------------
 
         if len(y) != len(y_pred):
             raise ValueError(
@@ -209,33 +270,61 @@ def evaluate_split(
                 f"predictions={len(y_pred):,}"
             )
 
+        prediction_pd["target"] = y.to_numpy()
+
     else:
 
-        raise ValueError(f"Unsupported evaluation engine: {engine}")
+        raise ValueError(
+            f"Unsupported evaluation engine: {engine}"
+        )
 
     # -----------------------------------------------------------------
     # Common prediction validation
     # -----------------------------------------------------------------
 
-    if len(y) == 0:
-        raise ValueError("Evaluation dataset is empty.")
-
-    if len(y) != len(y_proba):
+    if len(prediction_pd) == 0:
         raise ValueError(
-            "Evaluation target and predicted probabilities contain "
-            "different numbers of rows."
+            "Evaluation dataset is empty."
         )
 
-    if len(y) != len(y_pred):
+    if not np.isfinite(
+        prediction_pd["__prediction_probability"]
+    ).all():
         raise ValueError(
-            "Evaluation target and predictions contain " "different numbers of rows."
+            "Predicted probabilities contain non-finite values."
         )
 
-    if not np.isfinite(y_proba).all():
-        raise ValueError("Predicted probabilities contain non-finite values.")
+    if (
+        (prediction_pd["__prediction_probability"] < 0)
+        | (prediction_pd["__prediction_probability"] > 1)
+    ).any():
+        raise ValueError(
+            "Predicted probabilities must be between 0 and 1."
+        )
 
-    if ((y_proba < 0) | (y_proba > 1)).any():
-        raise ValueError("Predicted probabilities must be between 0 and 1.")
+    # -----------------------------------------------------------------
+    # Apply configured evaluation grain
+    # -----------------------------------------------------------------
+
+    evaluation_predictions = aggregate_evaluation_predictions(
+        predictions=prediction_pd,
+        config=config,
+    )
+
+    y = evaluation_predictions["target"].to_numpy()
+
+    y_proba = (
+        evaluation_predictions[
+            "__prediction_probability"
+        ]
+        .to_numpy()
+        .astype(float)
+    )
+
+    # Recompute classification prediction after aggregation.
+    y_pred = (
+        y_proba >= threshold
+    ).astype(int)
 
     # -----------------------------------------------------------------
     # Shared Pandas evaluation
@@ -249,11 +338,19 @@ def evaluate_split(
         calibration_bins=evaluation_config["calibration"]["bins"],
     )
 
+    # Record evaluation grain in the results.
+    evaluation_results["evaluation_grain"] = (
+        evaluation_config.get(
+            "grain",
+            "point_in_time",
+        )
+    )
+
     if return_predictions:
 
         return (
             evaluation_results,
-            y,
+            pd.Series(y),
             y_proba,
         )
 
@@ -270,7 +367,13 @@ def _get_calibration_model_metadata(
     config: dict,
 ) -> dict:
     """Return serializable metadata for the fitted calibration model."""
-    method = config["parameters"]["evaluation"]["calibration"]["method"].strip().lower()
+
+    method = (
+        config["parameters"]["evaluation"]["calibration"]["method"]
+        .strip()
+        .lower()
+    )
+
     return calculate_calibration_summary(
         calibration_model=calibration_model,
         method=method,
@@ -298,7 +401,9 @@ def _select_validation_threshold(
     OOT data is never used for threshold selection.
     """
 
-    threshold_config = config["parameters"]["evaluation"]["threshold_selection"]
+    threshold_config = (
+        config["parameters"]["evaluation"]["threshold_selection"]
+    )
 
     if not threshold_config["enabled"]:
 
@@ -315,7 +420,9 @@ def _select_validation_threshold(
     )
 
     if threshold_results.empty:
-        raise ValueError("Threshold evaluation returned no results.")
+        raise ValueError(
+            "Threshold evaluation returned no results."
+        )
 
     optimization_metric = threshold_config.get(
         "optimization_metric",
@@ -333,29 +440,48 @@ def _select_validation_threshold(
     if optimization_metric not in threshold_results.columns:
 
         raise ValueError(
-            "Unsupported threshold optimization metric: " f"{optimization_metric}"
+            "Unsupported threshold optimization metric: "
+            f"{optimization_metric}"
         )
 
-    best_threshold_row = threshold_results.sort_values(
-        by=[
-            optimization_metric,
-            "precision",
-            "recall",
-        ],
-        ascending=False,
-    ).iloc[0]
+    best_threshold_row = (
+        threshold_results
+        .sort_values(
+            by=[
+                optimization_metric,
+                "precision",
+                "recall",
+            ],
+            ascending=False,
+        )
+        .iloc[0]
+    )
 
-    selected_threshold = float(best_threshold_row["threshold"])
+    selected_threshold = float(
+        best_threshold_row["threshold"]
+    )
 
     threshold_summary = {
         "optimization_metric": optimization_metric,
         "selected_threshold": selected_threshold,
-        "validation_precision": float(best_threshold_row["precision"]),
-        "validation_recall": float(best_threshold_row["recall"]),
-        "validation_f1": float(best_threshold_row["f1"]),
-        "population_flagged": int(best_threshold_row["population_flagged"]),
-        "population_flagged_pct": float(best_threshold_row["population_flagged_pct"]),
-        "event_capture_rate": float(best_threshold_row["event_capture_rate"]),
+        "validation_precision": float(
+            best_threshold_row["precision"]
+        ),
+        "validation_recall": float(
+            best_threshold_row["recall"]
+        ),
+        "validation_f1": float(
+            best_threshold_row["f1"]
+        ),
+        "population_flagged": int(
+            best_threshold_row["population_flagged"]
+        ),
+        "population_flagged_pct": float(
+            best_threshold_row["population_flagged_pct"]
+        ),
+        "event_capture_rate": float(
+            best_threshold_row["event_capture_rate"]
+        ),
     }
 
     logger.info(
@@ -380,22 +506,11 @@ def _resolve_model_configuration(
 ) -> tuple[str, dict, dict]:
     """
     Resolve model configuration for the configured evaluation mode.
-
-    Returns
-    -------
-    tuple
-        mode,
-        model_config,
-        scoring_config
     """
 
     evaluation_config = config["parameters"]["evaluation"]
 
     mode = evaluation_config["mode"]
-
-    # -----------------------------------------------------------------
-    # Same run
-    # -----------------------------------------------------------------
 
     if mode == "same_run":
 
@@ -409,27 +524,19 @@ def _resolve_model_configuration(
             scoring_config,
         )
 
-    # -----------------------------------------------------------------
-    # Existing model
-    # -----------------------------------------------------------------
-
     if mode == "existing_model":
 
         model_config = deepcopy(config)
 
-        model_config["parameters"]["modelling"]["version"] = evaluation_config["model"][
-            "version"
-        ]
+        model_config["parameters"]["modelling"]["version"] = (
+            evaluation_config["model"]["version"]
+        )
 
-        model_config["parameters"]["modelling"]["algorithm"] = evaluation_config[
-            "model"
-        ]["type"]
+        model_config["parameters"]["modelling"]["algorithm"] = (
+            evaluation_config["model"]["type"]
+        )
 
         engine = config["parameters"]["engine"]
-
-        # -------------------------------------------------------------
-        # Load persisted training configuration.
-        # -------------------------------------------------------------
 
         if engine == "pyspark":
 
@@ -449,13 +556,15 @@ def _resolve_model_configuration(
 
         else:
 
-            raise ValueError(f"Unsupported modelling engine: {engine}")
+            raise ValueError(
+                f"Unsupported modelling engine: {engine}"
+            )
 
         scoring_config = deepcopy(config)
 
-        scoring_config["parameters"]["modelling"]["features"] = training_config[
-            "features"
-        ]
+        scoring_config["parameters"]["modelling"]["features"] = (
+            training_config["features"]
+        )
 
         return (
             mode,
@@ -463,7 +572,9 @@ def _resolve_model_configuration(
             scoring_config,
         )
 
-    raise ValueError(f"Unsupported evaluation mode: {mode}")
+    raise ValueError(
+        f"Unsupported evaluation mode: {mode}"
+    )
 
 
 # ---------------------------------------------------------------------
@@ -499,16 +610,14 @@ def run_evaluation_pipeline(
     """
     Run model evaluation for the configured datasets and persist results.
 
-    Prediction generation is engine-specific:
+    Prediction generation is engine-specific.
 
-        Pandas
-            sklearn preprocessing + sklearn model
-
-        PySpark
-            Spark PipelineModel + Spark ML model
+    Evaluation grain is configuration-driven:
+        point_in_time
+        loan_level
 
     All downstream evaluation, threshold selection, calibration,
-    top-k metrics, and reporting remain shared Pandas logic.
+    top-k metrics, and reporting use the selected evaluation grain.
     """
 
     start = perf_counter()
@@ -521,13 +630,11 @@ def run_evaluation_pipeline(
 
     engine = config["parameters"]["engine"]
 
-    # -----------------------------------------------------------------
-    # Skip
-    # -----------------------------------------------------------------
-
     if evaluation_config["skip"]:
 
-        logger.info("Evaluation pipeline skipped by configuration")
+        logger.info(
+            "Evaluation pipeline skipped by configuration"
+        )
 
         return
 
@@ -558,7 +665,8 @@ def run_evaluation_pipeline(
         if spark is None:
 
             raise ValueError(
-                "SparkSession is required when " "modelling engine is 'pyspark'."
+                "SparkSession is required when "
+                "modelling engine is 'pyspark'."
             )
 
         from credit_risk.modelling.artifacts_spark import (
@@ -571,14 +679,22 @@ def run_evaluation_pipeline(
 
     else:
 
-        raise ValueError(f"Unsupported modelling engine: {engine}")
+        raise ValueError(
+            f"Unsupported evaluation engine: {engine}"
+        )
 
     logger.info(
-        "Evaluation model loaded: " "engine=%s mode=%s version=%s algorithm=%s",
+        "Evaluation model loaded: "
+        "engine=%s mode=%s version=%s algorithm=%s "
+        "grain=%s",
         engine,
         mode,
         model_config["parameters"]["modelling"]["version"],
         model_config["parameters"]["modelling"]["algorithm"],
+        evaluation_config.get(
+            "grain",
+            "point_in_time",
+        ),
     )
 
     # -----------------------------------------------------------------
@@ -635,10 +751,6 @@ def run_evaluation_pipeline(
         )
 
         # -------------------------------------------------------------
-        # Threshold selection
-        # -------------------------------------------------------------
-
-        # -------------------------------------------------------------
         # Calibration
         # -------------------------------------------------------------
 
@@ -648,13 +760,18 @@ def run_evaluation_pipeline(
             config=scoring_config,
         )
 
-        calibration_model_metadata = _get_calibration_model_metadata(
-            calibration_model=calibration_model,
-            config=scoring_config,
+        calibration_model_metadata = (
+            _get_calibration_model_metadata(
+                calibration_model=calibration_model,
+                config=scoring_config,
+            )
         )
-        calibration_model_metadata["method"] = calibration_model_metadata[
-            "calibration_method"
-        ]
+
+        calibration_model_metadata["method"] = (
+            calibration_model_metadata[
+                "calibration_method"
+            ]
+        )
 
         y_val_calibrated_proba = apply_calibration(
             y_proba=y_validation_proba,
@@ -662,8 +779,17 @@ def run_evaluation_pipeline(
             config=scoring_config,
         )
 
-        validation_evaluation["calibration_model"] = calibration_model_metadata
-        validation_evaluation["calibration_summary"] = calibration_model_metadata
+        validation_evaluation["calibration_model"] = (
+            calibration_model_metadata
+        )
+
+        validation_evaluation["calibration_summary"] = (
+            calibration_model_metadata
+        )
+
+        # -------------------------------------------------------------
+        # Threshold selection
+        # -------------------------------------------------------------
 
         (
             selected_threshold,
@@ -677,11 +803,13 @@ def run_evaluation_pipeline(
 
         if selected_threshold is not None:
 
-            scoring_config["parameters"]["evaluation"]["classification"][
-                "threshold"
-            ] = selected_threshold
+            scoring_config["parameters"]["evaluation"][
+                "classification"
+            ]["threshold"] = selected_threshold
 
-            validation_evaluation["threshold_selection"] = threshold_summary
+            validation_evaluation["threshold_selection"] = (
+                threshold_summary
+            )
 
             threshold_summary_path = _get_evaluation_dir(
                 config,
@@ -689,7 +817,8 @@ def run_evaluation_pipeline(
             )
 
             threshold_results.to_csv(
-                threshold_summary_path / "threshold_summary.csv",
+                threshold_summary_path
+                / "threshold_summary.csv",
                 index=False,
             )
 
@@ -707,34 +836,12 @@ def run_evaluation_pipeline(
             )
 
         logger.info(
-            "Calibration fitted on validation: method=%s",
-            calibration_model_metadata["method"],
+            "Validation evaluation completed: grain=%s",
+            evaluation_config.get(
+                "grain",
+                "point_in_time",
+            ),
         )
-
-        # -------------------------------------------------------------
-        # SHAP
-        # -------------------------------------------------------------
-
-        if evaluation_config["shap"]["enabled"]:
-
-            if engine == "pandas":
-
-                evaluate_shap(
-                    model=model,
-                    preprocessor=preprocessor,
-                    df=validation_df,
-                    config=scoring_config,
-                    dataset_name="validation",
-                )
-
-            else:
-
-                logger.warning(
-                    "SHAP evaluation skipped for PySpark engine. "
-                    "The existing SHAP implementation is Pandas-based."
-                )
-
-        logger.info("Validation evaluation completed.")
 
     # -----------------------------------------------------------------
     # OOT evaluation
@@ -777,7 +884,9 @@ def run_evaluation_pipeline(
 
         if selected_threshold is not None:
 
-            oot_evaluation["threshold_applied"] = selected_threshold
+            oot_evaluation["threshold_applied"] = (
+                selected_threshold
+            )
 
         # -------------------------------------------------------------
         # Apply validation-fitted calibration to OOT.
@@ -791,65 +900,66 @@ def run_evaluation_pipeline(
                 config=scoring_config,
             )
 
-            raw_threshold = scoring_config["parameters"]["evaluation"][
-                "classification"
-            ]["threshold"]
-
-            y_oot_calibrated_pred = (y_oot_calibrated_proba >= raw_threshold).astype(
-                "int8"
+            raw_threshold = (
+                scoring_config["parameters"]["evaluation"][
+                    "classification"
+                ]["threshold"]
             )
+
+            y_oot_calibrated_pred = (
+                y_oot_calibrated_proba >= raw_threshold
+            ).astype("int8")
 
             calibrated_oot_evaluation = evaluate_dataset(
                 y_true=y_oot,
                 y_pred=y_oot_calibrated_pred,
                 y_proba=y_oot_calibrated_proba,
                 n_deciles=(
-                    scoring_config["parameters"]["evaluation"]["risk"]["n_deciles"]
+                    scoring_config["parameters"]["evaluation"][
+                        "risk"
+                    ]["n_deciles"]
                 ),
                 calibration_bins=(
-                    scoring_config["parameters"]["evaluation"]["calibration"]["bins"]
+                    scoring_config["parameters"]["evaluation"][
+                        "calibration"
+                    ]["bins"]
                 ),
             )
 
-            calibrated_oot_evaluation["calibration_applied"] = {
+            calibrated_oot_evaluation[
+                "calibration_applied"
+            ] = {
                 **calibration_model_metadata,
                 "raw_threshold": raw_threshold,
-                "raw_threshold": raw_threshold,
             }
-            calibrated_oot_evaluation["calibration_summary"] = (
-                calculate_calibration_summary(
-                    calibration_model=calibration_model,
-                    method=scoring_config["parameters"]["evaluation"]["calibration"][
-                        "method"
-                    ],
-                )
+
+            calibrated_oot_evaluation[
+                "calibration_summary"
+            ] = calculate_calibration_summary(
+                calibration_model=calibration_model,
+                method=scoring_config["parameters"][
+                    "evaluation"
+                ]["calibration"]["method"],
             )
-            calibrated_oot_evaluation["threshold_applied"] = raw_threshold
 
-        # -------------------------------------------------------------
-        # SHAP
-        # -------------------------------------------------------------
+            calibrated_oot_evaluation[
+                "threshold_applied"
+            ] = raw_threshold
 
-        if evaluation_config["shap"]["enabled"]:
+            calibrated_oot_evaluation[
+                "evaluation_grain"
+            ] = evaluation_config.get(
+                "grain",
+                "point_in_time",
+            )
 
-            if engine == "pandas":
-
-                evaluate_shap(
-                    model=model,
-                    preprocessor=preprocessor,
-                    df=oot_df,
-                    config=scoring_config,
-                    dataset_name="oot",
-                )
-
-            else:
-
-                logger.warning(
-                    "SHAP evaluation skipped for PySpark engine. "
-                    "The existing SHAP implementation is Pandas-based."
-                )
-
-        logger.info("OOT evaluation completed.")
+        logger.info(
+            "OOT evaluation completed: grain=%s",
+            evaluation_config.get(
+                "grain",
+                "point_in_time",
+            ),
+        )
 
     # -----------------------------------------------------------------
     # Persist evaluation results
@@ -863,6 +973,7 @@ def run_evaluation_pipeline(
     )
 
     logger.info(
-        "Evaluation pipeline completed: " "duration_seconds=%.2f",
+        "Evaluation pipeline completed: "
+        "duration_seconds=%.2f",
         perf_counter() - start,
     )

@@ -7,9 +7,11 @@ parameters:
   behavioral:
 
     observation_ages:
-      - 3
+      - 2
+      - 4
       - 6
-      - 9
+      - 8
+      - 10
       - 12
 
     lookback_windows_months:
