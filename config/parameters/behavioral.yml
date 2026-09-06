@@ -134,6 +134,15 @@ parameters:
         - relapse_after_current
 
         # ----------------------------------------------------------
+        # Macroeconomic environment — point-in-time
+        # ----------------------------------------------------------
+
+        - unemployment_rate
+        - mortgage_rate_30y
+        - hpi_purchase_only
+        - fed_funds_rate
+
+        # ----------------------------------------------------------
         # DDLPI data-quality / payment-state indicator
         # ----------------------------------------------------------
 
