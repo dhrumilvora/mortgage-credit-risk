@@ -2,15 +2,29 @@
 
 ## 1. Purpose
 
-This document describes the **GAM V2 interaction framework** for the mortgage credit-risk modelling pipeline.
+This document describes the **GAM V2 modelling and interaction framework** for the mortgage credit-risk modelling pipeline.
 
-GAM V1 is a strictly additive Generalized Additive Model:
+### What is a GAM?
+
+A **Generalized Additive Model (GAM)** models the log-odds of the outcome as a sum of interpretable feature effects:
 
 ```text
 logit(PD) = β₀ + Σ fⱼ(Xⱼ)
 ```
 
-V2 extends that architecture by allowing a **small, explicitly configured set of interactions** while retaining the core advantages of a GAM:
+Instead of forcing every numerical variable to have a purely linear relationship with risk, a GAM can learn a smooth function `fⱼ(.)` for selected variables. This allows the model to capture nonlinear risk relationships while remaining substantially more transparent than an unrestricted machine-learning model.
+
+For this mortgage PD model, the intended representation is deliberately simple:
+
+- **Numerical features are linear by default.**
+- Selected numerical features can be configured as **spline-able**.
+- A spline-able feature is fitted using training-data quantiles. If there are not enough unique/valid quantiles to construct the requested spline basis, the feature **automatically remains linear** rather than causing model fitting to fail.
+- Categorical features use the existing categorical encoding treatment.
+- A small number of explicitly configured interactions can capture situations where the effect of one risk factor depends on another.
+
+The goal is therefore **not to make the model maximally flexible**. The goal is to capture meaningful nonlinearities and a small number of defensible dependencies while preserving stability, interpretability, reproducibility, and governance.
+
+GAM V1 is the frozen additive benchmark. GAM V2 extends that benchmark by allowing a **small, explicitly configured set of interactions** while retaining the core advantages of a GAM:
 
 - controlled model complexity
 - transparent feature treatment
@@ -165,7 +179,58 @@ This allows V1 to remain the frozen additive benchmark/control while V2 is evalu
 
 ---
 
-# 4. Configuration
+# 4. Feature Representation and Spline Fallback
+
+The numerical-feature configuration follows a **linear-by-default, optionally-spline** design.
+
+Example:
+
+```yaml
+feature_transform:
+  default_numerical: linear
+  spline:
+    - credit_score
+    - original_dti
+    - estimated_ltv
+```
+
+This does **not** mean that every feature listed under `spline` is guaranteed to become a spline in the fitted model. It means those features are eligible to use a spline representation.
+
+During training:
+
+```text
+Configured numerical feature
+          │
+          ▼
+   Is it spline-able?
+      │          │
+     No         Yes
+      │          │
+      ▼          ▼
+   Linear   Fit quantile knots
+                  │
+             ┌────┴────┐
+             │         │
+       enough valid   insufficient
+       unique knots   unique knots
+             │         │
+             ▼         ▼
+          Spline      Linear
+```
+
+For a spline-able feature with insufficient unique quantiles, the model therefore falls back to the same linear representation used by other numerical variables:
+
+```text
+__imputed_<feature>
+```
+
+The fallback is learned during training and persisted with the fitted model. Scoring does not recompute quantiles or make a new representation decision.
+
+This distinction is important for both main effects and interactions. An interaction uses the **actual fitted representation** of its numeric features. Therefore, if one side of an interaction falls back from spline to linear, the interaction is constructed using the linear representation rather than failing or silently fitting a different transformation.
+
+---
+
+# 5. Configuration
 
 Interactions are configured under the GAM configuration.
 
@@ -208,7 +273,7 @@ categorical × categorical
 
 ---
 
-# 5. Interaction Type 1 — Numeric × Numeric
+# 6. Interaction Type 1 — Numeric × Numeric
 
 ## 5.1 Motivation
 
@@ -315,7 +380,7 @@ the interaction therefore has 64 tensor-product basis terms.
 
 ---
 
-# 6. Interaction Centering
+# 7. Interaction Centering
 
 A full tensor-product basis can overlap conceptually with the main-effect space.
 
@@ -373,7 +438,7 @@ This keeps the interaction representation more cleanly separated from the main-e
 
 ---
 
-# 7. Interaction Type 2 — Numeric × Categorical
+# 8. Interaction Type 2 — Numeric × Categorical
 
 ## 7.1 Motivation
 
@@ -453,7 +518,7 @@ A binary categorical variable is simply the special case where the encoded categ
 
 ---
 
-# 8. Interaction Pipeline Architecture
+# 9. Interaction Pipeline Architecture
 
 The interaction implementation is deliberately placed **inside** the persisted Spark pipeline.
 
@@ -509,7 +574,7 @@ inside the Spark `PipelineModel`.
 
 ---
 
-# 9. Feature Representation
+# 10. Feature Representation
 
 The model deliberately keeps interaction outputs as **vector features** rather than creating an uncontrolled number of permanent top-level DataFrame columns.
 
@@ -543,7 +608,7 @@ This keeps the feature assembly manageable as the interaction configuration grow
 
 ---
 
-# 10. Validation and Error Handling
+# 11. Validation and Error Handling
 
 The interaction configuration is validated before model fitting.
 
@@ -567,9 +632,14 @@ results in an error rather than silently generating a high-cardinality dummy int
 
 ### Numeric features
 
-Numeric features used in interactions must have an appropriate spline representation when the interaction engine reuses the fitted spline basis.
+Numeric features used in interactions must belong to the configured numerical
+feature universe. Their representation is resolved from the fitted model:
 
-This ensures the interaction and its corresponding main effect use consistent transformations.
+- spline if the configured spline-able feature has enough valid, unique quantiles
+- linear otherwise
+
+The interaction therefore reuses the same representation as the corresponding
+main effect, ensuring consistent transformations.
 
 ### Invalid spline configuration
 
@@ -583,7 +653,7 @@ Existing spline validation continues to apply, including:
 
 ---
 
-# 11. Persistence and Scoring
+# 12. Persistence and Scoring
 
 The interaction model is designed to behave like the existing GAM pipeline:
 
@@ -622,7 +692,7 @@ This is particularly important for the monthly mortgage risk-feed use case becau
 
 ---
 
-# 12. V1 Compatibility
+# 13. V1 Compatibility
 
 Interaction support is optional.
 
@@ -671,9 +741,9 @@ This provides a clean control:
 
 ---
 
-# 13. Current Candidate Interactions
+# 14. Current Candidate Interactions
 
-The initial V2 configuration contains:
+The current V2 configuration contains five candidate interactions:
 
 ```yaml
 interactions:
@@ -682,9 +752,11 @@ interactions:
     - [credit_score, estimated_ltv]
     - [credit_score, modification_flag]
     - [estimated_ltv, occupancy_status]
+    - [dpd_trend_6m, property_type]
+    - [dpd_trend_6m, dpd_acceleration_6m]
 ```
 
-These represent three distinct modelling hypotheses:
+These represent five modelling hypotheses:
 
 ### Credit score × estimated LTV
 
@@ -716,11 +788,31 @@ leverage
 occupancy
 ```
 
+### DPD trend × property type
+
+Whether the relationship between recent delinquency trend and mortgage risk differs across property types.
+
+```text
+delinquency trajectory
+      ×
+property type
+```
+
+### DPD trend × DPD acceleration
+
+Whether the effect of delinquency trend depends on the rate at which delinquency itself is changing.
+
+```text
+delinquency trajectory
+      ×
+delinquency acceleration
+```
+
 These are hypotheses to be **tested**, not assumed to be beneficial merely because they are included.
 
 ---
 
-# 14. Model Evaluation Framework
+# 15. Model Evaluation Framework
 
 V2 should not be accepted solely because its training or validation AUC improves.
 
@@ -768,7 +860,7 @@ Each retained interaction should have a defensible business/risk interpretation.
 
 ---
 
-# 15. Interaction Acceptance Principle
+# 16. Interaction Acceptance Principle
 
 An interaction should earn its place in the model.
 
@@ -809,7 +901,7 @@ The goal is:
 
 ---
 
-# 16. Testing Requirements
+# 17. Testing Requirements
 
 Before running the full mortgage dataset, the interaction implementation should be tested on a small deterministic fixture.
 
@@ -865,7 +957,7 @@ This test is particularly important because GAM V1 is the frozen benchmark.
 
 ---
 
-# 17. Governance Considerations
+# 18. Governance Considerations
 
 The interaction configuration should be treated as part of the model specification.
 
@@ -890,7 +982,7 @@ The configuration, code, tests, model artifact, and evaluation results should mo
 
 ---
 
-# 18. Summary
+# 19. Summary
 
 GAM V2 extends the frozen additive GAM V1 benchmark with a deliberately constrained interaction framework.
 
@@ -922,3 +1014,21 @@ Binary as separate type ✗
 ```
 
 The V2 model should ultimately be judged against the frozen V1 GAM using **OOT discrimination, calibration, stability, and interpretability**, rather than in-sample fit alone.
+
+The central modelling philosophy is:
+
+```text
+Numerical features
+      │
+      ├── linear by default
+      │
+      └── selected features are spline-able
+                    │
+             enough quantiles?
+                │         │
+               Yes        No
+                │         │
+             spline     linear
+```
+
+Interactions then operate on those **actual fitted representations**, keeping the model flexible enough to capture meaningful risk relationships without turning it into an unrestricted nonlinear model.

@@ -1,6 +1,6 @@
-"""Spark GAM V1 modelling utilities.
+"""Spark GAM V2 modelling utilities.
 
-GAM V1 is a strictly additive Generalized Additive Model:
+GAM V2 is an additive Generalized Additive Model with optional interactions:
 
     logit(PD) = beta_0 + sum_j f_j(X_j)
 
@@ -12,7 +12,7 @@ The complete model is one Spark PipelineModel. Preprocessing, fitted
 spline knots, feature assembly, and logistic-regression coefficients are
 therefore persisted with the PipelineModel.
 
-V1 behavior is preserved when interactions are disabled.
+V1 behavior is preserved exactly when interactions are disabled.
 """
 
 from __future__ import annotations
@@ -25,7 +25,8 @@ import numpy as np
 from pyspark import keyword_only
 from pyspark.ml import Estimator, Pipeline, Transformer
 from pyspark.ml.classification import LogisticRegression
-from pyspark.ml.feature import Imputer, OneHotEncoder, StringIndexer, VectorAssembler
+from pyspark.ml.feature import Imputer, OneHotEncoder, StringIndexer, VectorAssembler, VectorSizeHint
+from pyspark.ml.functions import array_to_vector, vector_to_array
 from pyspark.ml.param import Param, Params, TypeConverters
 from pyspark.ml.util import DefaultParamsReadable, DefaultParamsWritable
 from pyspark.sql import DataFrame, functions as F
@@ -78,70 +79,42 @@ def _resolve_interaction_type(
 def _get_gam_interaction_specs(
     config: dict,
 ) -> list[GAMInteractionSpec]:
-    """Read and validate configured GAM interactions."""
+    """Read and validate configured GAM interactions.
+
+    Numeric features do not need to be configured as spline features.
+    Their fitted representation is resolved later from the actual fitted
+    spline basis. This means a numeric feature can participate in an
+    interaction as linear or spline.
+    """
 
     features = config["parameters"]["modelling"]["features"]
-
-    numerical_features = set(
-        features.get("numerical_features", [])
-    )
-    categorical_features = set(
-        features.get("categorical_features", [])
-    )
+    numerical_features = set(features.get("numerical_features", []))
+    categorical_features = set(features.get("categorical_features", []))
     all_features = numerical_features | categorical_features
 
-    gam_config = config[
-        "parameters"
-    ][
-        "modelling"
-    ][
-        "gam"
-    ]
-
-    interaction_config = gam_config.get(
-        "interactions",
-        {},
-    )
+    gam_config = config["parameters"]["modelling"]["gam"]
+    interaction_config = gam_config.get("interactions", {})
 
     if not interaction_config.get("enabled", False):
         return []
 
     pairs = interaction_config.get("pairs", [])
-
     if not isinstance(pairs, list):
-        raise ValueError(
-            "GAM interactions.pairs must be a list."
-        )
+        raise ValueError("GAM interactions.pairs must be a list.")
 
     specs: list[GAMInteractionSpec] = []
     seen_pairs: set[frozenset[str]] = set()
 
-    # Interaction numeric features reuse the existing main-effect spline
-    # basis, so every numeric side must already be configured as a spline.
-    spline_features = set(
-        gam_config.get(
-            "feature_transform",
-            {},
-        ).get(
-            "spline",
-            [],
-        )
-    )
-
     for pair in pairs:
-
         if not isinstance(pair, (list, tuple)) or len(pair) != 2:
             raise ValueError(
-                "Each GAM interaction must contain exactly "
-                "two feature names."
+                "Each GAM interaction must contain exactly two feature names."
             )
 
         left, right = pair
 
         if not isinstance(left, str) or not isinstance(right, str):
-            raise ValueError(
-                "GAM interaction feature names must be strings."
-            )
+            raise ValueError("GAM interaction feature names must be strings.")
 
         if left == right:
             raise ValueError(
@@ -149,13 +122,8 @@ def _get_gam_interaction_specs(
             )
 
         unknown = sorted(
-            {
-                feature
-                for feature in (left, right)
-                if feature not in all_features
-            }
+            {feature for feature in (left, right) if feature not in all_features}
         )
-
         if unknown:
             raise ValueError(
                 "GAM interaction contains unknown features: "
@@ -163,13 +131,10 @@ def _get_gam_interaction_specs(
             )
 
         pair_key = frozenset((left, right))
-
         if pair_key in seen_pairs:
             raise ValueError(
-                f"Duplicate GAM interaction: "
-                f"'{left}' × '{right}'."
+                f"Duplicate GAM interaction: '{left}' × '{right}'."
             )
-
         seen_pairs.add(pair_key)
 
         interaction_type = _resolve_interaction_type(
@@ -178,23 +143,6 @@ def _get_gam_interaction_specs(
             numerical_features=numerical_features,
             categorical_features=categorical_features,
         )
-
-        numeric_features_in_pair = [
-            feature
-            for feature in (left, right)
-            if feature in numerical_features
-        ]
-
-        missing_spline_features = sorted(
-            set(numeric_features_in_pair) - spline_features
-        )
-
-        if missing_spline_features:
-            raise ValueError(
-                "Numeric features used in GAM interactions must also "
-                "be configured as spline features: "
-                + ", ".join(missing_spline_features)
-            )
 
         specs.append(
             GAMInteractionSpec(
@@ -290,6 +238,550 @@ def _decode_interaction_specs(
         )
 
     return specs
+
+
+class GAMInteractionEstimator(
+    Estimator,
+    DefaultParamsReadable,
+    DefaultParamsWritable,
+):
+    """Fit representation-aware GAM interaction transformations."""
+
+    interactionSpecs = Param(
+        Params._dummy(),
+        "interactionSpecs",
+        "JSON-encoded configured GAM interaction specifications.",
+        TypeConverters.toString,
+    )
+    numericalFeatures = Param(
+        Params._dummy(),
+        "numericalFeatures",
+        "Canonical numerical GAM features.",
+        TypeConverters.toList,
+    )
+    categoricalFeatures = Param(
+        Params._dummy(),
+        "categoricalFeatures",
+        "Canonical categorical GAM features.",
+        TypeConverters.toList,
+    )
+
+    @keyword_only
+    def __init__(
+        self,
+        interactionSpecs: str = "[]",
+        numericalFeatures: list[str] | None = None,
+        categoricalFeatures: list[str] | None = None,
+    ) -> None:
+        super().__init__()
+        self._setDefault(
+            interactionSpecs="[]",
+            numericalFeatures=[],
+            categoricalFeatures=[],
+        )
+        self.setParams(
+            interactionSpecs=interactionSpecs,
+            numericalFeatures=numericalFeatures or [],
+            categoricalFeatures=categoricalFeatures or [],
+        )
+
+    @keyword_only
+    def setParams(
+        self,
+        interactionSpecs: str | None = None,
+        numericalFeatures: list[str] | None = None,
+        categoricalFeatures: list[str] | None = None,
+    ) -> "GAMInteractionEstimator":
+        return self._set(**self._input_kwargs)
+
+    @staticmethod
+    def _basis_columns(
+        dataset: DataFrame,
+        feature: str,
+    ) -> list[str]:
+        prefix = f"{feature}_spline_"
+        columns = [
+            column
+            for column in dataset.columns
+            if column.startswith(prefix)
+            and column[len(prefix):].isdigit()
+        ]
+        return sorted(
+            columns,
+            key=lambda column: int(column.rsplit("_", 1)[1]),
+        )
+
+    @staticmethod
+    def _encoded_dimension(
+        dataset: DataFrame,
+        feature: str,
+    ) -> int:
+        encoded = f"__encoded_{feature}"
+        if encoded not in dataset.columns:
+            raise ValueError(
+                f"Expected encoded categorical column '{encoded}' not found."
+            )
+
+        field = dataset.schema[encoded]
+        dimension = field.metadata.get("ml_attr", {}).get("num_attrs")
+
+        if dimension is None or int(dimension) < 1:
+            raise ValueError(
+                f"Unable to determine encoded dimensionality for "
+                f"'{feature}'."
+            )
+
+        return int(dimension)
+
+    def _fit(self, dataset: DataFrame) -> "GAMInteractionModel":
+        specs = _decode_interaction_specs(
+            self.getOrDefault(self.interactionSpecs)
+        )
+        numerical_features = set(
+            self.getOrDefault(self.numericalFeatures)
+        )
+        categorical_features = set(
+            self.getOrDefault(self.categoricalFeatures)
+        )
+
+        if not specs:
+            return GAMInteractionModel(
+                interactionSpecs="[]",
+                linearMeans="{}",
+                splineMeans="{}",
+                categoricalDimensions="{}",
+                interactionSizes="{}",
+            )
+
+        basis_columns: dict[str, list[str]] = {}
+        linear_features: set[str] = set()
+        categorical_dimensions: dict[str, int] = {}
+        resolved_specs: list[GAMInteractionSpec] = []
+        interaction_sizes: dict[str, int] = {}
+
+        def representation(feature: str) -> str:
+            if feature in numerical_features:
+                if self._basis_columns(dataset, feature):
+                    return "spline"
+                return "linear"
+
+            if feature in categorical_features:
+                return "categorical"
+
+            raise ValueError(
+                f"Unknown GAM interaction feature '{feature}'."
+            )
+
+        for spec in specs:
+            left_rep = representation(spec.left)
+            right_rep = representation(spec.right)
+
+            if (
+                left_rep == "categorical"
+                and right_rep == "categorical"
+            ):
+                raise ValueError(
+                    "Categorical × categorical interactions are not supported: "
+                    f"'{spec.left}' × '{spec.right}'."
+                )
+
+            if (
+                left_rep == "categorical"
+                or right_rep == "categorical"
+            ):
+                if left_rep == "categorical":
+                    categorical_feature = spec.left
+                    numeric_feature = spec.right
+                else:
+                    categorical_feature = spec.right
+                    numeric_feature = spec.left
+
+                numeric_rep = (
+                    right_rep if left_rep == "categorical" else left_rep
+                )
+                resolved_type = f"{numeric_rep}_categorical"
+
+                categorical_dimensions[categorical_feature] = (
+                    self._encoded_dimension(
+                        dataset,
+                        categorical_feature,
+                    )
+                )
+            else:
+                resolved_type = f"{left_rep}_{right_rep}"
+
+            resolved_spec = GAMInteractionSpec(
+                left=spec.left,
+                right=spec.right,
+                interaction_type=resolved_type,
+            )
+            resolved_specs.append(resolved_spec)
+
+            for feature, feature_rep in (
+                (spec.left, left_rep),
+                (spec.right, right_rep),
+            ):
+                if feature_rep == "linear":
+                    linear_features.add(feature)
+                elif feature_rep == "spline":
+                    columns = self._basis_columns(dataset, feature)
+                    if not columns:
+                        raise ValueError(
+                            f"No fitted spline basis found for '{feature}'."
+                        )
+                    basis_columns[feature] = columns
+
+            if resolved_type == "linear_linear":
+                interaction_size = 1
+            elif resolved_type == "spline_linear":
+                interaction_size = len(basis_columns[spec.left])
+            elif resolved_type == "linear_spline":
+                interaction_size = len(basis_columns[spec.right])
+            elif resolved_type == "spline_spline":
+                interaction_size = (
+                    len(basis_columns[spec.left])
+                    * len(basis_columns[spec.right])
+                )
+            elif resolved_type == "linear_categorical":
+                categorical_feature = (
+                    spec.right
+                    if spec.left in numerical_features
+                    else spec.left
+                )
+                interaction_size = categorical_dimensions[categorical_feature]
+            elif resolved_type == "spline_categorical":
+                categorical_feature = (
+                    spec.right
+                    if spec.left in numerical_features
+                    else spec.left
+                )
+                numeric_feature = (
+                    spec.left
+                    if spec.left in numerical_features
+                    else spec.right
+                )
+                interaction_size = (
+                    len(basis_columns[numeric_feature])
+                    * categorical_dimensions[categorical_feature]
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported resolved GAM interaction type: {resolved_type!r}"
+                )
+
+            interaction_sizes[
+                f"__interaction__{spec.left}__{spec.right}"
+            ] = int(interaction_size)
+
+        mean_expressions = []
+
+        for feature in sorted(linear_features):
+            mean_expressions.append(
+                F.avg(
+                    F.col(f"__imputed_{feature}")
+                ).alias(
+                    f"__mean_linear_{feature}"
+                )
+            )
+
+        for feature in sorted(basis_columns):
+            for column in basis_columns[feature]:
+                mean_expressions.append(
+                    F.avg(
+                        F.col(column)
+                    ).alias(
+                        f"__mean_{column}"
+                    )
+                )
+
+        linear_means: dict[str, float] = {}
+        spline_means: dict[str, list[float]] = {}
+
+        if mean_expressions:
+            row = dataset.select(*mean_expressions).first()
+            if row is None:
+                raise ValueError(
+                    "Unable to fit GAM interaction state: "
+                    "training DataFrame is empty."
+                )
+
+            for feature in sorted(linear_features):
+                value = row[f"__mean_linear_{feature}"]
+                linear_means[feature] = (
+                    float(value) if value is not None else 0.0
+                )
+
+            for feature in sorted(basis_columns):
+                spline_means[feature] = [
+                    (
+                        float(row[f"__mean_{column}"])
+                        if row[f"__mean_{column}"] is not None
+                        else 0.0
+                    )
+                    for column in basis_columns[feature]
+                ]
+
+        return GAMInteractionModel(
+            interactionSpecs=_encode_interaction_specs(resolved_specs),
+            linearMeans=json.dumps(
+                linear_means,
+                sort_keys=True,
+            ),
+            splineMeans=json.dumps(
+                spline_means,
+                sort_keys=True,
+            ),
+            categoricalDimensions=json.dumps(
+                categorical_dimensions,
+                sort_keys=True,
+            ),
+            interactionSizes=json.dumps(
+                interaction_sizes,
+                sort_keys=True,
+            ),
+        )
+
+
+class GAMInteractionModel(
+    Transformer,
+    DefaultParamsReadable,
+    DefaultParamsWritable,
+):
+    """Apply fitted linear/spline/categorical GAM interactions."""
+
+    interactionSpecs = Param(
+        Params._dummy(),
+        "interactionSpecs",
+        "JSON-encoded resolved interaction specifications.",
+        TypeConverters.toString,
+    )
+    linearMeans = Param(
+        Params._dummy(),
+        "linearMeans",
+        "JSON-encoded training means for linear numeric features.",
+        TypeConverters.toString,
+    )
+    splineMeans = Param(
+        Params._dummy(),
+        "splineMeans",
+        "JSON-encoded training means for spline basis columns.",
+        TypeConverters.toString,
+    )
+    categoricalDimensions = Param(
+        Params._dummy(),
+        "categoricalDimensions",
+        "JSON-encoded encoded categorical vector dimensions.",
+        TypeConverters.toString,
+    )
+    interactionSizes = Param(
+        Params._dummy(),
+        "interactionSizes",
+        "JSON-encoded output vector sizes for interaction columns.",
+        TypeConverters.toString,
+    )
+
+    @keyword_only
+    def __init__(
+        self,
+        interactionSpecs: str = "[]",
+        linearMeans: str = "{}",
+        splineMeans: str = "{}",
+        categoricalDimensions: str = "{}",
+        interactionSizes: str = "{}",
+    ) -> None:
+        super().__init__()
+        self._setDefault(
+            interactionSpecs="[]",
+            linearMeans="{}",
+            splineMeans="{}",
+            categoricalDimensions="{}",
+            interactionSizes="{}",
+        )
+        self.setParams(
+            interactionSpecs=interactionSpecs,
+            linearMeans=linearMeans,
+            splineMeans=splineMeans,
+            categoricalDimensions=categoricalDimensions,
+            interactionSizes=interactionSizes,
+        )
+
+    @keyword_only
+    def setParams(
+        self,
+        interactionSpecs: str | None = None,
+        linearMeans: str | None = None,
+        splineMeans: str | None = None,
+        categoricalDimensions: str | None = None,
+        interactionSizes: str | None = None,
+    ) -> "GAMInteractionModel":
+        return self._set(**self._input_kwargs)
+
+    @staticmethod
+    def _hint_vector_size(
+        dataset: DataFrame,
+        column: str,
+        size: int,
+    ) -> DataFrame:
+        """Attach explicit Spark ML vector-size metadata."""
+
+        hinted = VectorSizeHint(
+            inputCol=column,
+            size=int(size),
+            handleInvalid="error",
+        ).transform(dataset)
+        return hinted
+
+    def _transform(self, dataset: DataFrame) -> DataFrame:
+        specs = _decode_interaction_specs(
+            self.getOrDefault(self.interactionSpecs)
+        )
+        if not specs:
+            return dataset
+
+        linear_means = json.loads(
+            self.getOrDefault(self.linearMeans)
+        )
+        spline_means = json.loads(
+            self.getOrDefault(self.splineMeans)
+        )
+        categorical_dimensions = json.loads(
+            self.getOrDefault(self.categoricalDimensions)
+        )
+        interaction_sizes = json.loads(
+            self.getOrDefault(self.interactionSizes)
+        )
+
+        result = dataset
+
+        def linear_col(feature: str) -> Column:
+            if feature not in linear_means:
+                raise ValueError(
+                    f"Missing fitted linear mean for '{feature}'."
+                )
+            return (
+                F.col(f"__imputed_{feature}")
+                - F.lit(linear_means[feature])
+            )
+
+        def spline_cols(feature: str) -> list[Column]:
+            if feature not in spline_means:
+                raise ValueError(
+                    f"Missing fitted spline means for '{feature}'."
+                )
+            return [
+                F.col(f"{feature}_spline_{index}")
+                - F.lit(mean)
+                for index, mean in enumerate(spline_means[feature])
+            ]
+
+        for spec in specs:
+            left = spec.left
+            right = spec.right
+            output_column = (
+                f"__interaction__{left}__{right}"
+            )
+
+            interaction_type = spec.interaction_type
+
+            if interaction_type == "linear_linear":
+                terms = [
+                    linear_col(left) * linear_col(right)
+                ]
+
+            elif interaction_type == "spline_linear":
+                terms = [
+                    basis * linear_col(right)
+                    for basis in spline_cols(left)
+                ]
+
+            elif interaction_type == "linear_spline":
+                terms = [
+                    linear_col(left) * basis
+                    for basis in spline_cols(right)
+                ]
+
+            elif interaction_type == "spline_spline":
+                left_basis = spline_cols(left)
+                right_basis = spline_cols(right)
+                terms = [
+                    left_term * right_term
+                    for left_term in left_basis
+                    for right_term in right_basis
+                ]
+
+            elif interaction_type in {
+                "linear_categorical",
+                "spline_categorical",
+            }:
+                if left in linear_means or left in spline_means:
+                    numeric_feature = left
+                    categorical_feature = right
+                else:
+                    numeric_feature = right
+                    categorical_feature = left
+
+                encoded_column = (
+                    f"__encoded_{categorical_feature}"
+                )
+
+                if encoded_column not in dataset.columns:
+                    raise ValueError(
+                        f"Expected encoded categorical column "
+                        f"'{encoded_column}'."
+                    )
+
+                encoded = vector_to_array(
+                    F.col(encoded_column)
+                )
+                dimension = int(
+                    categorical_dimensions[categorical_feature]
+                )
+
+                numeric_terms = (
+                    [linear_col(numeric_feature)]
+                    if interaction_type == "linear_categorical"
+                    else spline_cols(numeric_feature)
+                )
+
+                terms = [
+                    term * encoded.getItem(category_index)
+                    for category_index in range(dimension)
+                    for term in numeric_terms
+                ]
+
+            else:
+                raise ValueError(
+                    f"Unsupported GAM interaction type: "
+                    f"{interaction_type!r}"
+                )
+
+            expected_size = int(
+                interaction_sizes[output_column]
+            )
+            if len(terms) != expected_size:
+                raise ValueError(
+                    f"GAM interaction '{output_column}' produced "
+                    f"{len(terms)} terms but fitted state expects "
+                    f"{expected_size}."
+                )
+
+            result = result.withColumn(
+                output_column,
+                array_to_vector(
+                    F.array(*terms)
+                ),
+            )
+
+            # VectorAssembler with handleInvalid='keep' requires vector
+            # length metadata. array_to_vector does not reliably preserve
+            # that metadata, so make the fitted size explicit.
+            result = self._hint_vector_size(
+                result,
+                output_column,
+                expected_size,
+            )
+
+        return result
 
 
 # ======================================================================
@@ -403,7 +895,6 @@ def _bspline_basis_expression(
     )
 
 
-
 def build_full_knot_vector(
     spec: GAMSplineSpec,
 ) -> list[float]:
@@ -438,9 +929,14 @@ def _fit_gam_spline_specs_spark(
     features: list[str],
     degree: int,
     num_knots: int,
-) -> dict[str, GAMSplineSpec]:
+) -> tuple[dict[str, GAMSplineSpec], dict[str, dict[str, str]]]:
     """
-    Fit spline specifications using observed training values only.
+    Fit optional spline specifications using observed training values only.
+
+    Every numerical feature remains valid as a linear feature. A configured
+    spline feature is upgraded to a spline only when the requested quantile
+    knots are sufficiently distinct to define a valid spline. Otherwise the
+    feature automatically remains linear.
 
     Knot estimation is performed on the original feature columns.
     Null/NaN values are excluded from knot estimation.
@@ -451,9 +947,7 @@ def _fit_gam_spline_specs_spark(
     """
 
     if not features:
-        raise ValueError(
-            "GAM requires at least one spline feature."
-        )
+        return {}, {}
 
     if len(features) != len(set(features)):
         raise ValueError(
@@ -489,13 +983,10 @@ def _fit_gam_spline_specs_spark(
     ).tolist()
 
     # Fit knots on observed values, not on __imputed_* columns.
-    # Median imputation can create an artificial mass at one value and
-    # therefore produce repeated quantile knots.
     aggregation_expressions = []
 
     for feature in features:
         column = F.col(feature).cast("double")
-
         valid_column = F.when(
             column.isNotNull() & ~F.isnan(column),
             column,
@@ -516,10 +1007,8 @@ def _fit_gam_spline_specs_spark(
             ]
         )
 
-    # One Spark action for all spline features.
-    row = df.select(
-        *aggregation_expressions,
-    ).first()
+    # One Spark action for all configured spline-able features.
+    row = df.select(*aggregation_expressions).first()
 
     if row is None:
         raise ValueError(
@@ -528,87 +1017,87 @@ def _fit_gam_spline_specs_spark(
         )
 
     specs: dict[str, GAMSplineSpec] = {}
+    representations: dict[str, dict[str, str]] = {}
 
     for feature in features:
         valid_count = row[f"__valid_count_{feature}"]
 
         if valid_count is None or valid_count == 0:
             raise ValueError(
-                f"Spline feature '{feature}' has no valid observed "
-                "training values."
+                f"Spline-able feature '{feature}' has no valid observed "
+                "training values, so it cannot be represented linearly "
+                "or by a spline."
             )
 
         quantiles = row[f"__quantiles_{feature}"]
+        reason: str | None = None
 
         if quantiles is None:
-            raise ValueError(
-                f"Failed to compute spline quantiles for '{feature}'."
-            )
+            reason = "quantile estimation returned no values"
+        else:
+            quantiles = [
+                float(value)
+                for value in quantiles
+                if value is not None
+            ]
 
-        quantiles = [
-            float(value)
-            for value in quantiles
-            if value is not None
-        ]
+            if len(quantiles) != num_knots:
+                reason = (
+                    f"only {len(quantiles)} of {num_knots} requested "
+                    "quantiles were available"
+                )
+            elif not np.isfinite(quantiles).all():
+                reason = "quantile estimation produced non-finite values"
+            else:
+                lower_bound = quantiles[0]
+                upper_bound = quantiles[-1]
+                all_knots = [
+                    lower_bound,
+                    *quantiles[1:-1],
+                    upper_bound,
+                ]
 
-        if len(quantiles) != num_knots:
-            raise ValueError(
-                f"Failed to compute {num_knots} spline quantiles "
-                f"for '{feature}'. Got {len(quantiles)}."
-            )
+                if lower_bound >= upper_bound:
+                    reason = (
+                        "insufficient observed variation for the requested "
+                        "spline knots"
+                    )
+                elif any(
+                    right <= left
+                    for left, right in zip(
+                        all_knots,
+                        all_knots[1:],
+                    )
+                ):
+                    reason = (
+                        "insufficient unique quantiles for the requested "
+                        "spline knots"
+                    )
 
-        if not np.isfinite(quantiles).all():
-            raise ValueError(
-                f"Non-finite spline knot values generated "
-                f"for '{feature}': {quantiles}"
-            )
-
-        lower_bound = quantiles[0]
-        upper_bound = quantiles[-1]
-
-        if lower_bound >= upper_bound:
-            raise ValueError(
-                f"Spline feature '{feature}' has insufficient variation "
-                f"in the observed training data: "
-                f"lower_bound={lower_bound}, "
-                f"upper_bound={upper_bound}, "
-                f"valid_count={valid_count}, "
-                f"quantiles={quantiles}."
-            )
+        if reason is not None:
+            # Linear is the baseline representation for every numerical
+            # feature. A spline request is therefore opportunistic rather
+            # than a hard requirement.
+            representations[feature] = {
+                "representation": "linear",
+                "reason": reason,
+            }
+            continue
 
         internal_knots = quantiles[1:-1]
-
-        all_knots = [
-            lower_bound,
-            *internal_knots,
-            upper_bound,
-        ]
-
-        if any(
-            right <= left
-            for left, right in zip(
-                all_knots,
-                all_knots[1:],
-            )
-        ):
-            raise ValueError(
-                f"Spline feature '{feature}' has repeated quantile "
-                f"knots in observed training data. "
-                f"quantiles={quantiles}. "
-                f"Reduce num_knots or choose a feature with greater "
-                f"variation."
-            )
-
         specs[feature] = GAMSplineSpec(
             feature=feature,
             degree=degree,
             knots=internal_knots,
-            lower_bound=lower_bound,
-            upper_bound=upper_bound,
+            lower_bound=quantiles[0],
+            upper_bound=quantiles[-1],
         )
+        representations[feature] = {
+            "representation": "spline",
+            "reason": "",
+        }
 
-    return specs
-
+    return specs, representations
 
 
 # ======================================================================
@@ -724,7 +1213,6 @@ def _decode_spline_specs(
         )
 
     return specs
-
 
 
 # ======================================================================
@@ -922,7 +1410,7 @@ class GAMSplineEstimator(
             )
         )
 
-        specs = _fit_gam_spline_specs_spark(
+        specs, representations = _fit_gam_spline_specs_spark(
             df=dataset,
             features=features,
             degree=degree,
@@ -931,6 +1419,10 @@ class GAMSplineEstimator(
 
         return GAMSplineModel(
             splineSpecs=_encode_spline_specs(specs),
+            representations=json.dumps(
+                representations,
+                sort_keys=True,
+            ),
             inputCols=features,
         )
 
@@ -966,10 +1458,18 @@ class GAMSplineModel(
         TypeConverters.toString,
     )
 
+    representations = Param(
+        Params._dummy(),
+        "representations",
+        "JSON-encoded fitted numerical representations.",
+        TypeConverters.toString,
+    )
+
     @keyword_only
     def __init__(
         self,
         splineSpecs: str | None = None,
+        representations: str | None = None,
         inputCols: list[str] | None = None,
     ) -> None:
 
@@ -977,11 +1477,13 @@ class GAMSplineModel(
 
         self._setDefault(
             splineSpecs="{}",
+            representations="{}",
             inputCols=[],
         )
 
         self.setParams(
             splineSpecs=splineSpecs or "{}",
+            representations=representations or "{}",
             inputCols=inputCols or [],
         )
 
@@ -989,9 +1491,9 @@ class GAMSplineModel(
     def setParams(
         self,
         splineSpecs: str | None = None,
+        representations: str | None = None,
         inputCols: list[str] | None = None,
     ) -> "GAMSplineModel":
-
         return self._set(
             **self._input_kwargs,
         )
@@ -1006,6 +1508,11 @@ class GAMSplineModel(
                 self.splineSpecs
             )
         )
+        representations = json.loads(
+            self.getOrDefault(
+                self.representations
+            )
+        )
 
         features = list(
             self.getOrDefault(
@@ -1014,13 +1521,26 @@ class GAMSplineModel(
         )
 
         if not features:
-            raise ValueError(
-                "Fitted GAM spline model contains no spline features."
-            )
+            return dataset
 
         result = dataset
 
         for feature in features:
+            representation = representations.get(
+                feature,
+                {"representation": "spline"},
+            ).get("representation")
+
+            if representation == "linear":
+                # The imputed numerical column is already present and is
+                # consumed by the final GAM assembly stage.
+                continue
+
+            if representation != "spline":
+                raise ValueError(
+                    f"Unsupported fitted representation for '{feature}': "
+                    f"{representation!r}."
+                )
 
             if feature not in specs:
                 raise ValueError(
@@ -1112,7 +1632,7 @@ def _get_gam_feature_groups(
     list[str],
 ]:
     """
-    Determine strict additive GAM V1 feature treatment.
+    Determine GAM feature treatment while preserving V1 main effects.
 
     Returns:
         spline_features
@@ -1323,6 +1843,13 @@ def _get_gam_model_features(
         + engineered_features
     )
 
+    interaction_specs = _get_gam_interaction_specs(config)
+
+    model_features += [
+        f"__interaction__{spec.left}__{spec.right}"
+        for spec in interaction_specs
+    ]
+
     if not model_features:
         raise ValueError(
             "GAM has no model features after "
@@ -1463,6 +1990,223 @@ def _build_gam_preparation_stages(
 
 
 # ======================================================================
+# FINAL FEATURE ASSEMBLY
+# ======================================================================
+
+
+class GAMFeatureAssemblyEstimator(
+    Estimator,
+    DefaultParamsReadable,
+    DefaultParamsWritable,
+):
+    """
+    Resolve the actual fitted GAM representation and freeze the final
+    VectorAssembler input columns.
+
+    A configured spline-able numerical feature can be either a spline or
+    linear after fitting, so the final feature list cannot be determined
+    safely from configuration alone.
+    """
+
+    numericalFeatures = Param(
+        Params._dummy(),
+        "numericalFeatures",
+        "Canonical numerical GAM features in configured order.",
+        TypeConverters.toList,
+    )
+    categoricalFeatures = Param(
+        Params._dummy(),
+        "categoricalFeatures",
+        "Canonical categorical GAM features in configured order.",
+        TypeConverters.toList,
+    )
+    engineeredFeatures = Param(
+        Params._dummy(),
+        "engineeredFeatures",
+        "Engineered GAM features in configured order.",
+        TypeConverters.toList,
+    )
+    interactionOutputCols = Param(
+        Params._dummy(),
+        "interactionOutputCols",
+        "Fitted interaction vector columns in configured order.",
+        TypeConverters.toList,
+    )
+
+    @keyword_only
+    def __init__(
+        self,
+        numericalFeatures: list[str] | None = None,
+        categoricalFeatures: list[str] | None = None,
+        engineeredFeatures: list[str] | None = None,
+        interactionOutputCols: list[str] | None = None,
+    ) -> None:
+        super().__init__()
+        self._setDefault(
+            numericalFeatures=[],
+            categoricalFeatures=[],
+            engineeredFeatures=[],
+            interactionOutputCols=[],
+        )
+        self.setParams(
+            numericalFeatures=numericalFeatures or [],
+            categoricalFeatures=categoricalFeatures or [],
+            engineeredFeatures=engineeredFeatures or [],
+            interactionOutputCols=interactionOutputCols or [],
+        )
+
+    @keyword_only
+    def setParams(
+        self,
+        numericalFeatures: list[str] | None = None,
+        categoricalFeatures: list[str] | None = None,
+        engineeredFeatures: list[str] | None = None,
+        interactionOutputCols: list[str] | None = None,
+    ) -> "GAMFeatureAssemblyEstimator":
+        return self._set(**self._input_kwargs)
+
+    @staticmethod
+    def _spline_basis_columns(
+        dataset: DataFrame,
+        feature: str,
+    ) -> list[str]:
+        prefix = f"{feature}_spline_"
+        columns = [
+            column
+            for column in dataset.columns
+            if column.startswith(prefix)
+            and column[len(prefix):].isdigit()
+        ]
+        return sorted(
+            columns,
+            key=lambda column: int(column.rsplit("_", 1)[1]),
+        )
+
+    def _fit(self, dataset: DataFrame) -> "GAMFeatureAssemblyModel":
+        numerical_features = list(
+            self.getOrDefault(self.numericalFeatures)
+        )
+        categorical_features = list(
+            self.getOrDefault(self.categoricalFeatures)
+        )
+        engineered_features = list(
+            self.getOrDefault(self.engineeredFeatures)
+        )
+        interaction_output_cols = list(
+            self.getOrDefault(self.interactionOutputCols)
+        )
+
+        model_features: list[str] = []
+
+        # Every numerical feature has a linear representation available.
+        # If the preceding spline stage produced basis columns, use them;
+        # otherwise use the original imputed linear column.
+        for feature in numerical_features:
+            basis_columns = self._spline_basis_columns(
+                dataset,
+                feature,
+            )
+            if basis_columns:
+                model_features.extend(basis_columns)
+            else:
+                model_features.append(
+                    f"__imputed_{feature}"
+                )
+
+        model_features.extend(
+            f"__encoded_{feature}"
+            for feature in categorical_features
+        )
+        model_features.extend(engineered_features)
+        model_features.extend(interaction_output_cols)
+
+        if not model_features:
+            raise ValueError(
+                "GAM has no model features after feature treatment."
+            )
+
+        missing = [
+            column
+            for column in model_features
+            if column not in dataset.columns
+        ]
+        if missing:
+            raise ValueError(
+                "GAM feature assembly requires missing columns: "
+                + ", ".join(missing)
+            )
+
+        if len(model_features) != len(set(model_features)):
+            raise ValueError(
+                "GAM model feature columns contain duplicates."
+            )
+
+        return GAMFeatureAssemblyModel(
+            inputCols=json.dumps(model_features)
+        )
+
+
+class GAMFeatureAssemblyModel(
+    Transformer,
+    DefaultParamsReadable,
+    DefaultParamsWritable,
+):
+    """Apply the frozen native Spark VectorAssembler configuration."""
+
+    inputCols = Param(
+        Params._dummy(),
+        "inputCols",
+        "JSON-encoded frozen GAM VectorAssembler input columns.",
+        TypeConverters.toString,
+    )
+
+    @keyword_only
+    def __init__(
+        self,
+        inputCols: str = "[]",
+    ) -> None:
+        super().__init__()
+        self._setDefault(inputCols="[]")
+        self.setParams(inputCols=inputCols)
+
+    @keyword_only
+    def setParams(
+        self,
+        inputCols: str | None = None,
+    ) -> "GAMFeatureAssemblyModel":
+        return self._set(**self._input_kwargs)
+
+    def _transform(self, dataset: DataFrame) -> DataFrame:
+        input_cols = json.loads(
+            self.getOrDefault(self.inputCols)
+        )
+        if not input_cols:
+            raise ValueError(
+                "GAM feature assembly contains no input columns."
+            )
+
+        missing = [
+            column
+            for column in input_cols
+            if column not in dataset.columns
+        ]
+        if missing:
+            raise ValueError(
+                "GAM VectorAssembler input columns are missing: "
+                + ", ".join(missing)
+            )
+
+        # Keep VectorAssembler as the actual Spark ML assembly operation.
+        # This model only freezes its fitted input column list so spline
+        # fallback decisions remain persisted with the PipelineModel.
+        return VectorAssembler(
+            inputCols=input_cols,
+            outputCol="features",
+            handleInvalid="keep",
+        ).transform(dataset)
+
+
+# ======================================================================
 # PIPELINE
 # ======================================================================
 
@@ -1470,67 +2214,85 @@ def _build_gam_preparation_stages(
 def build_gam_pipeline(
     config: dict,
 ) -> Pipeline:
-    """Build the complete strictly additive GAM V1 pipeline."""
+    """Build the complete representation-aware GAM V2 Spark Pipeline.
 
-    spline_features, _, _, _ = (
-        _get_gam_feature_groups(
-            config
+    Training-data screening is intentionally NOT a Pipeline stage.
+    ``train_gam_spark`` applies optional screening to the training DataFrame
+    before fitting. This guarantees that validation and OOT DataFrames are
+    transformed at their full size by the persisted PipelineModel.
+    """
+
+    features = config["parameters"]["modelling"]["features"]
+
+    numerical_features = list(
+        features.get(
+            "numerical_features",
+            [],
         )
     )
 
-    model_features = (
-        _get_gam_model_features(
-            config
+    categorical_features = list(
+        features.get(
+            "categorical_features",
+            [],
         )
     )
 
-    spline_config = config[
-        "parameters"
-    ][
-        "modelling"
-    ][
-        "gam"
-    ][
-        "spline"
-    ]
-
-    stages: list[Any] = (
-        _build_gam_preparation_stages(
-            config
+    engineered_features = list(
+        features.get(
+            "engineered_features",
+            [],
         )
     )
 
-    # --------------------------------------------------------------
-    # Fit spline knots on training data.
-    # --------------------------------------------------------------
+    spline_features, _, _, _ = _get_gam_feature_groups(
+        config
+    )
+
+    spline_config = (
+        config["parameters"]["modelling"]["gam"]["spline"]
+    )
+
+    stages: list[Any] = _build_gam_preparation_stages(
+        config
+    )
 
     stages.append(
         GAMSplineEstimator(
             inputCols=spline_features,
-            degree=int(
-                spline_config["degree"]
-            ),
-            numKnots=int(
-                spline_config["num_knots"]
-            ),
+            degree=int(spline_config["degree"]),
+            numKnots=int(spline_config["num_knots"]),
         )
     )
 
-    # --------------------------------------------------------------
-    # Assemble final additive feature vector.
-    # --------------------------------------------------------------
+    interaction_specs = _get_gam_interaction_specs(
+        config
+    )
+
+    interaction_output_cols = [
+        f"__interaction__{spec.left}__{spec.right}"
+        for spec in interaction_specs
+    ]
+
+    if interaction_specs:
+        stages.append(
+            GAMInteractionEstimator(
+                interactionSpecs=_encode_interaction_specs(
+                    interaction_specs
+                ),
+                numericalFeatures=numerical_features,
+                categoricalFeatures=categorical_features,
+            )
+        )
 
     stages.append(
-        VectorAssembler(
-            inputCols=model_features,
-            outputCol="features",
-            handleInvalid="keep",
+        GAMFeatureAssemblyEstimator(
+            numericalFeatures=numerical_features,
+            categoricalFeatures=categorical_features,
+            engineeredFeatures=engineered_features,
+            interactionOutputCols=interaction_output_cols,
         )
     )
-
-    # --------------------------------------------------------------
-    # Logistic regression.
-    # --------------------------------------------------------------
 
     stages.append(
         LogisticRegression(
@@ -1544,17 +2306,15 @@ def build_gam_pipeline(
     )
 
 
-# ======================================================================
-# TRAINING ENTRY POINT
-# ======================================================================
-
-
 def train_gam_spark(
     training_df: DataFrame,
     config: dict,
 ) -> Any:
-    """
-    Fit and return the complete serializable GAM PipelineModel.
+    """Train the GAM Spark Pipeline.
+
+    Optional experiment screening is applied ONLY to ``training_df`` before
+    Pipeline.fit(). The resulting PipelineModel therefore transforms the
+    complete validation/OOT datasets without sampling them.
     """
 
     if "label" not in training_df.columns:
@@ -1563,10 +2323,52 @@ def train_gam_spark(
             "the Spark ML target column 'label'."
         )
 
+    gam_config = (
+        config["parameters"]
+        ["modelling"]
+        ["gam"]
+    )
+
+    experiment_config = gam_config.get(
+        "experiment",
+        {},
+    )
+
+    screening_fraction = float(
+        experiment_config.get(
+            "screening_sample_fraction",
+            1.0,
+        )
+    )
+
+    screening_seed = int(
+        experiment_config.get(
+            "screening_seed",
+            42,
+        )
+    )
+
+    if not 0.0 < screening_fraction <= 1.0:
+        raise ValueError(
+            "gam.experiment.screening_sample_fraction "
+            "must be between 0 and 1."
+        )
+
+    fit_df = training_df
+
+    if screening_fraction < 1.0:
+        fit_df = training_df.sample(
+            withReplacement=False,
+            fraction=screening_fraction,
+            seed=screening_seed,
+        )
+
     pipeline = build_gam_pipeline(
         config
     )
 
     return pipeline.fit(
-        training_df
+        fit_df
     )
+
+

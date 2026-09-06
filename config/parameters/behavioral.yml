@@ -7,14 +7,14 @@ parameters:
   behavioral:
 
     observation_ages:
-    - 3
-    - 6
-    - 9
-    - 12
+      - 3
+      - 6
+      - 9
+      - 12
 
     lookback_windows_months:
-    - 3
-    - 12
+      - 3
+      - 12
 
     prediction_horizon_months: 12
 
@@ -26,125 +26,142 @@ parameters:
 
     features:
 
-      # ----------------------------------------------------------
-      # Origination features
-      # ----------------------------------------------------------
-
       numerical_features:
 
-      - number_of_borrowers
-      - mi_percentage
-      - original_upb
-      - credit_score
-      - original_dti
-      - original_ltv
-      - original_cltv
+        # ----------------------------------------------------------
+        # Origination
+        # ----------------------------------------------------------
 
-      # ----------------------------------------------------------
-      # Current point-in-time state
-      # ----------------------------------------------------------
+        - number_of_borrowers
+        - mi_percentage
+        - original_upb
+        - credit_score
+        - original_dti
+        - original_ltv
+        - original_cltv
 
-      - current_actual_upb
-      - current_interest_rate
-      - estimated_ltv
-      - calculated_loan_age
-      - remaining_months_to_legal_maturity
+        # ----------------------------------------------------------
+        # Current point-in-time loan state
+        # ----------------------------------------------------------
 
-      # ----------------------------------------------------------
-      # Current balance composition
-      # ----------------------------------------------------------
+        - current_actual_upb
+        - current_interest_rate
+        - estimated_ltv
+        - calculated_loan_age
+        - remaining_months_to_legal_maturity
 
-      - non_interest_bearing_upb_pct
+        # ----------------------------------------------------------
+        # Current balance composition
+        # ----------------------------------------------------------
 
-      # ----------------------------------------------------------
-      # Current / lifetime behavioural history
-      # ----------------------------------------------------------
+        - non_interest_bearing_upb_pct
+        - interest_bearing_upb_pct
 
-      - max_dpd_to_date
-      - delinquency_months_to_date
-      - months_since_last_delinquency
+        # ----------------------------------------------------------
+        # Current / lifetime behavioural history
+        # ----------------------------------------------------------
 
-      # ----------------------------------------------------------
-      # Lifetime intervention / assistance history
-      # ----------------------------------------------------------
+        - max_dpd_to_date
+        - delinquency_months_to_date
+        - months_since_last_delinquency
 
-      - ever_modified
-      - ever_payment_deferred
-      - ever_borrower_assistance
-      - ever_disaster_delinquency
+        # ----------------------------------------------------------
+        # Lifetime intervention / assistance history
+        # ----------------------------------------------------------
 
-      # ----------------------------------------------------------
-      # Recent behavioural history
-      # ----------------------------------------------------------
-      # 12-month lookback
+        - ever_modified
+        - ever_payment_deferred
+        - ever_borrower_assistance
+        - ever_disaster_delinquency
 
-      - dpd_30_count_12m
-      - dpd_60_count_12m
-      - max_dpd_12m
-      - modification_count_12m
-      - payment_deferral_count_12m
-      - borrower_assistance_count_12m
-      - disaster_delinquency_count_12m
-      - rate_step_count_12m
+        # ----------------------------------------------------------
+        # Recent behavioural history — 12 months
+        # ----------------------------------------------------------
 
-      # 3-month lookback
+        - dpd_30_count_12m
+        - dpd_60_count_12m
+        - max_dpd_12m
+        - modification_count_12m
+        - payment_deferral_count_12m
+        - borrower_assistance_count_12m
+        - disaster_delinquency_count_12m
+        - rate_step_count_12m
 
-      - dpd_30_count_3m
-      - dpd_60_count_3m
-      - max_dpd_3m
-      - modification_count_3m
-      - payment_deferral_count_3m
-      - borrower_assistance_count_3m
-      - disaster_delinquency_count_3m
-      - rate_step_count_3m
+        # ----------------------------------------------------------
+        # Recent behavioural history — 3 months
+        # ----------------------------------------------------------
 
-      # ----------------------------------------------------------
-      # Post-origination trajectory
-      # ----------------------------------------------------------
+        - dpd_30_count_3m
+        - dpd_60_count_3m
+        - max_dpd_3m
+        - modification_count_3m
+        - payment_deferral_count_3m
+        - borrower_assistance_count_3m
+        - disaster_delinquency_count_3m
+        - rate_step_count_3m
 
-      - upb_pct_change_from_origination
-      - rate_change_from_origination
+        # ----------------------------------------------------------
+        # Post-origination loan trajectory
+        # ----------------------------------------------------------
 
-      # ----------------------------------------------------------
-      # Point-in-time delinquency trajectory / drift
-      # ----------------------------------------------------------
+        - upb_pct_change_from_origination
+        - rate_change_from_origination
 
-      # Phase 1: persistence / recency / direction
-      - current_delinquency_streak
-      - max_delinquency_streak_12m
-      - months_since_last_30dpd
-      - months_since_last_60dpd
-      - dpd_trend_6m
+        # ----------------------------------------------------------
+        # Payment behaviour
+        # ----------------------------------------------------------
 
-      # Phase 2: change / acceleration / recurrence
-      - dpd_acceleration_6m
-      - delinquency_intensity_change_6m
-      - dpd_severity_change_6m
-      - delinquency_episode_count
-      - relapse_after_current
+        # - months_since_last_paid_installment
+
+        # ----------------------------------------------------------
+        # Delinquency trajectory — persistence / recency / direction
+        # ----------------------------------------------------------
+
+        - current_delinquency_streak
+        - max_delinquency_streak_12m
+        - months_since_last_30dpd
+        - months_since_last_60dpd
+        - dpd_trend_6m
+
+        # ----------------------------------------------------------
+        # Delinquency trajectory — change / acceleration / recurrence
+        # ----------------------------------------------------------
+
+        - dpd_acceleration_6m
+        - delinquency_intensity_change_6m
+        - dpd_severity_change_6m
+        - delinquency_episode_count
+        - relapse_after_current
+
+        # ----------------------------------------------------------
+        # DDLPI data-quality / payment-state indicator
+        # ----------------------------------------------------------
+
+        # - ddlpi_ahead_flag
 
       categorical_features:
 
-      # ----------------------------------------------------------
-      # Origination categorical variables
-      # ----------------------------------------------------------
-      - property_type
-      - occupancy_status
-      - loan_purpose
-      - channel
-      - super_conforming_flag
-      - harp_indicator
-      - property_state
+        # ----------------------------------------------------------
+        # Origination categorical variables
+        # ----------------------------------------------------------
 
-      # ----------------------------------------------------------
-      # Performance / behavioural categorical variables
-      # ----------------------------------------------------------
+        - property_type
+        - occupancy_status
+        - loan_purpose
+        - channel
+        - super_conforming_flag
+        - harp_indicator
+        - property_state
 
-      - modification_flag
-      - interest_rate_step_indicator
-      - payment_deferral_flag
-      - delinquency_due_to_disaster
-      - borrower_assistance_plan
+        # ----------------------------------------------------------
+        # Performance / behavioural categorical variables
+        # ----------------------------------------------------------
+
+        - modification_flag
+        - interest_rate_step_indicator
+        - payment_deferral_flag
+        - delinquency_due_to_disaster
+        - borrower_assistance_plan
 
       engineered_features: []
 

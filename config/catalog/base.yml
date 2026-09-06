@@ -10,6 +10,11 @@ catalog:
     file_name: "perf"
     file_type: "txt"
 
+  raw_macro_data:
+    folder_name: "01_raw"
+    file_name: "us_macro_montly"
+    file_type: "csv"
+
   ## Intermediate Origination & Performance Files
   origination_path:
     folder_name: "02_intermediate"

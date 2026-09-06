@@ -11,9 +11,9 @@ parameters:
   engine: "pyspark" # pyspark / pandas
 
   spark:
-    master: local[*]
-    driver_memory: 80g
-    shuffle_partitions: 512
+    master: local[28]
+    driver_memory: 70g
+    shuffle_partitions: 356
 
   # ============================================================
   # LOGGING
@@ -109,7 +109,7 @@ parameters:
   modelling:
     skip: false
     use_existing_splits: true
-    version: gam_with_interactions
+    version: gam_with_interactions_feature_rich
 
     # ----------------------------------------------------------
     # Training / OOT vintage split
@@ -196,30 +196,77 @@ parameters:
         degree: 3
         num_knots: 6
         knot_strategy: quantile
-
+    
+      experiment:
+        screening_sample_fraction: 0.10
+        screening_seed: 42
+    
       feature_transform:
         default_numerical: linear
         spline:
+          # Structural / borrower risk
           - credit_score
           - original_dti
           - original_ltv
           - original_cltv
           - estimated_ltv
+    
+          # Loan economics
           - current_interest_rate
           - current_actual_upb
           - remaining_months_to_legal_maturity
-          # - upb_pct_change_from_origination
-          # - dpd_trend_6m
-          # - dpd_acceleration_6m
-          # - dpd_severity_change_6m
-        interactions:
-            enabled: true
-            pairs:
-              - [credit_score, estimated_ltv]
-              - [credit_score, modification_flag]
-              - [estimated_ltv, occupancy_status]
-              - [dpd_trend_6m, property_type]
-              - [dpd_acceleration_6m, dp_severity_change_6m]
+    
+          # Behavioural trajectory
+          - dpd_trend_6m
+          - dpd_acceleration_6m
+          - dpd_severity_change_6m
+    
+          # Additional behavioural shape
+          - current_delinquency_streak
+          - max_delinquency_streak_12m
+          - months_since_last_30dpd
+          - months_since_last_60dpd
+          - delinquency_intensity_change_6m
+    
+      interactions:
+        enabled: true
+        pairs:
+    
+          # Existing
+          - [credit_score, estimated_ltv]
+          - [credit_score, modification_flag]
+          - [estimated_ltv, occupancy_status]
+          - [dpd_trend_6m, property_type]
+          - [dpd_trend_6m, dpd_acceleration_6m]
+    
+          # Newly tested
+          - [original_dti, credit_score]
+          - [dpd_trend_6m, estimated_ltv]
+          - [dpd_acceleration_6m, estimated_ltv]
+    
+          # Full structural × behavioural block
+          - [dpd_trend_6m, credit_score]
+          - [dpd_acceleration_6m, credit_score]
+          - [dpd_severity_change_6m, credit_score]
+          - [delinquency_intensity_change_6m, credit_score]
+    
+          # Behavioural deterioration × exposure
+          - [dpd_severity_change_6m, estimated_ltv]
+          - [delinquency_intensity_change_6m, estimated_ltv]
+          - [current_delinquency_streak, estimated_ltv]
+    
+          # Affordability × collateral / borrower quality
+          - [original_dti, estimated_ltv]
+          - [original_dti, original_ltv]
+    
+          # Rate pressure × affordability
+          - [current_interest_rate, original_dti]
+          - [rate_change_from_origination, original_dti]
+          - [rate_change_from_origination, estimated_ltv]
+    
+          # Delinquency history × borrower quality
+          - [delinquency_episode_count, credit_score]
+          - [current_delinquency_streak, credit_score]
   # ============================================================
   # COMMON TARGET DEFINITIONS
   # ============================================================
@@ -239,10 +286,10 @@ parameters:
 
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run
-    mode: same_run
+    mode: existing_model
 
     model:
-      version: gam_with_interactions
+      version: gam_with_interactions_feature_rich
       type: gam
 
     threshold_selection:
