@@ -7,18 +7,16 @@ parameters:
   behavioral:
 
     observation_ages:
-      - 2
-      - 4
+      - 3
       - 6
-      - 8
-      - 10
+      - 9
       - 12
 
     lookback_windows_months:
       - 3
       - 12
 
-    prediction_horizon_months: 6
+    prediction_horizon_months: 3
 
   # ============================================================
   # MODELLING
@@ -181,6 +179,4 @@ parameters:
   # ============================================================
 
   target:
-
     name: future_90dpd
-    horizon_months: 3

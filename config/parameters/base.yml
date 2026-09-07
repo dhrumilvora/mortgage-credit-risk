@@ -62,8 +62,7 @@ parameters:
       performance_workers: 8
 
     preprocess:
-      skip: true
-
+      skip: false
       # ----------------------------------------------------------
       # Macroeconomic features
       # ----------------------------------------------------------
@@ -121,7 +120,7 @@ parameters:
 
   modelling:
     skip: false
-    use_existing_splits: true
+    use_existing_splits: false
     version: hgam_test
 
     # ----------------------------------------------------------
