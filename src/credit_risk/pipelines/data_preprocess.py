@@ -110,7 +110,7 @@ def build_modelling_dataset_origination_pandas(
     """
     Existing Pandas origination modelling pipeline.
 
-    Retained as the reference implementation.
+    Retained as the reference implementation.   
     """
 
     data_config = config["parameters"]["data"]

@@ -2,748 +2,247 @@
 
 ## 1. Purpose
 
-This document describes the **GAM V2 modelling and interaction framework** for the mortgage credit-risk modelling pipeline.
+This document describes the controlled interaction framework used by the mortgage credit-risk GAM.
 
-### What is a GAM?
-
-A **Generalized Additive Model (GAM)** models the log-odds of the outcome as a sum of interpretable feature effects:
+A Generalized Additive Model represents the log-odds approximately as:
 
 ```text
-logit(PD) = β₀ + Σ fⱼ(Xⱼ)
+logit(PD) = β0 + Σ f_j(X_j)
 ```
 
-Instead of forcing every numerical variable to have a purely linear relationship with risk, a GAM can learn a smooth function `fⱼ(.)` for selected variables. This allows the model to capture nonlinear risk relationships while remaining substantially more transparent than an unrestricted machine-learning model.
+The project extends the additive structure with a small, explicitly configured set of interaction effects:
 
-For this mortgage PD model, the intended representation is deliberately simple:
+```text
+logit(PD)
+  = β0
+  + Σ f_j(X_j)
+  + Σ h_m(X_a, X_b)
+```
 
-- **Numerical features are linear by default.**
-- Selected numerical features can be configured as **spline-able**.
-- A spline-able feature is fitted using training-data quantiles. If there are not enough unique/valid quantiles to construct the requested spline basis, the feature **automatically remains linear** rather than causing model fitting to fail.
-- Categorical features use the existing categorical encoding treatment.
-- A small number of explicitly configured interactions can capture situations where the effect of one risk factor depends on another.
-
-The goal is therefore **not to make the model maximally flexible**. The goal is to capture meaningful nonlinearities and a small number of defensible dependencies while preserving stability, interpretability, reproducibility, and governance.
-
-GAM V1 is the frozen additive benchmark. GAM V2 extends that benchmark by allowing a **small, explicitly configured set of interactions** while retaining the core advantages of a GAM:
-
-- controlled model complexity
-- transparent feature treatment
-- explicit interaction specification
-- train-only learned transformation state
-- reproducible scoring
-- persistence inside a single Spark `PipelineModel`
-- straightforward governance and model review
-
-The objective is **not** to turn the GAM into an unrestricted nonlinear model. Interactions are deliberately constrained and must be justified as model components.
+The goal is not unrestricted nonlinear modelling. The goal is to capture defensible dependencies while retaining transparency, reproducibility and governance.
 
 ---
 
-## 2. V1 → V2 Evolution
+## 2. GAM V1 → V2
 
-### GAM V1
+### Additive benchmark
 
 ```text
-Raw features
-     │
-     ▼
+Features
+   ↓
+linear numerical effects
+spline numerical effects
+categorical effects
+   ↓
+VectorAssembler
+   ↓
+Logistic Regression
+```
+
+### Interaction-enabled GAM
+
+```text
+Features
+   ↓
 GAM preparation
-     │
-     ├── Linear numerical effects
-     ├── Spline numerical effects
-     └── Categorical effects
-             │
-             ▼
-      VectorAssembler
-             │
-             ▼
-   Logistic Regression
+   ↓
+Main effects
+   ├── linear numerical
+   ├── spline numerical
+   └── categorical
+            +
+   Configured interactions
+   ├── numeric × numeric
+   └── numeric × categorical
+            ↓
+     VectorAssembler
+            ↓
+    Logistic Regression
 ```
 
-Mathematically:
-
-```text
-η = β₀ + Σ fⱼ(Xⱼ) + Σ βₖZₖ
-```
-
-where `fⱼ(.)` represents a spline-based main effect and `Zₖ` represents a linear/categorical model component.
-
-### GAM V2
-
-```text
-Raw features
-     │
-     ▼
-GAMPreparationTransformer
-     │
-     ▼
-GAMSplineEstimator
-     │
-     ▼
-GAMSplineModel
-     │
-     ├─────────────── Main effects
-     │
-     └─────────────── Interaction effects
-                         │
-              ┌──────────┴──────────┐
-              │                     │
-        Numeric × Numeric    Numeric × Categorical
-              │                     │
-       Tensor-product        Varying-effect
-           spline                spline
-              │                     │
-              └──────────┬──────────┘
-                         ▼
-                  VectorAssembler
-                         │
-                         ▼
-                Logistic Regression
-```
-
-The resulting linear predictor is:
-
-```text
-η = β₀
-  + Σ fⱼ(Xⱼ)
-  + Σ hₘ(Xₐ, X_b)
-```
-
-where `hₘ(.)` is a deliberately configured interaction effect.
+With interactions disabled, the architecture reduces to the additive benchmark.
 
 ---
 
-## 3. Interaction Philosophy
+## 3. Interaction philosophy
 
-The interaction framework follows five principles.
+### Controlled rather than exhaustive
 
-### 3.1 Controlled rather than exhaustive
+Interactions are supplied explicitly through configuration.
 
-Interactions are supplied explicitly in configuration.
+The implementation does not automatically generate every pairwise interaction.
 
-The model does **not** automatically generate all pairwise interactions.
-
-This keeps the model reviewable and limits unnecessary complexity.
-
-### 3.2 At least one side must be numeric
-
-Supported interaction types are:
+### Supported interaction types
 
 | Interaction | Supported | Representation |
 |---|---:|---|
 | Numeric × Numeric | Yes | Tensor-product spline |
-| Numeric × Categorical | Yes | Varying-effect spline |
-| Categorical × Numeric | Yes | Same as Numeric × Categorical |
-| Categorical × Categorical | No | Explicitly rejected |
+| Numeric × Categorical | Yes | Varying-effect representation |
+| Categorical × Numeric | Yes | Same representation |
+| Categorical × Categorical | No | Rejected |
 
-Binary variables are **not a separate model type**. They are already represented in the categorical feature set and therefore use the same Numeric × Categorical machinery.
-
-### 3.3 Reuse the fitted main-effect spline basis
-
-Interactions do not independently refit spline knots.
-
-For a numeric feature participating in an interaction, the interaction reuses the spline basis learned for that feature's main effect.
-
-This provides:
-
-- consistent treatment of the same variable
-- no duplicate knot-learning logic
-- no train/score mismatch
-- simpler persistence
-- easier interpretation
-
-### 3.4 All learned state is train-only
-
-Anything learned from the data must be fitted using the training partition only.
-
-This includes:
-
-- spline knots
-- spline support bounds
-- spline-basis centering quantities
-- categorical encoding state
-
-Validation and OOT data only receive transformations learned from training data.
-
-### 3.5 V1 must remain reproducible
-
-With:
-
-```yaml
-interactions:
-  enabled: false
-```
-
-the interaction stage is absent and the pipeline follows the V1 architecture.
-
-This allows V1 to remain the frozen additive benchmark/control while V2 is evaluated as a separate candidate.
+Categorical variables, including binary indicators, use the project's existing categorical treatment.
 
 ---
 
-# 4. Feature Representation and Spline Fallback
+## 4. Spline representation
 
-The numerical-feature configuration follows a **linear-by-default, optionally-spline** design.
-
-Example:
-
-```yaml
-feature_transform:
-  default_numerical: linear
-  spline:
-    - credit_score
-    - original_dti
-    - estimated_ltv
-```
-
-This does **not** mean that every feature listed under `spline` is guaranteed to become a spline in the fitted model. It means those features are eligible to use a spline representation.
-
-During training:
-
-```text
-Configured numerical feature
-          │
-          ▼
-   Is it spline-able?
-      │          │
-     No         Yes
-      │          │
-      ▼          ▼
-   Linear   Fit quantile knots
-                  │
-             ┌────┴────┐
-             │         │
-       enough valid   insufficient
-       unique knots   unique knots
-             │         │
-             ▼         ▼
-          Spline      Linear
-```
-
-For a spline-able feature with insufficient unique quantiles, the model therefore falls back to the same linear representation used by other numerical variables:
-
-```text
-__imputed_<feature>
-```
-
-The fallback is learned during training and persisted with the fitted model. Scoring does not recompute quantiles or make a new representation decision.
-
-This distinction is important for both main effects and interactions. An interaction uses the **actual fitted representation** of its numeric features. Therefore, if one side of an interaction falls back from spline to linear, the interaction is constructed using the linear representation rather than failing or silently fitting a different transformation.
-
----
-
-# 5. Configuration
-
-Interactions are configured under the GAM configuration.
-
-Example:
-
-```yaml
-interactions:
-  enabled: true
-  pairs:
-    - [credit_score, estimated_ltv]
-    - [credit_score, modification_flag]
-    - [estimated_ltv, occupancy_status]
-```
-
-The configuration intentionally contains only **feature pairs**.
-
-There is no separate configuration for binary variables.
-
-The implementation determines the interaction type from the existing feature groups:
-
-```text
-if feature ∈ numerical_features:
-    type = numeric
-else:
-    type = categorical
-```
-
-The resolver then applies:
-
-```text
-numeric × numeric
-        → numeric_numeric
-
-numeric × categorical
-        → numeric_categorical
-
-categorical × categorical
-        → reject
-```
-
----
-
-# 6. Interaction Type 1 — Numeric × Numeric
-
-## 5.1 Motivation
-
-A standard additive GAM assumes:
-
-```text
-effect = f(x) + g(z)
-```
-
-This means the effect of `x` is the same regardless of the value of `z`.
-
-A numeric × numeric interaction allows:
-
-```text
-effect = f(x) + g(z) + h(x,z)
-```
-
-The additional term captures situations where the effect of one risk variable changes depending on the level of another.
-
-For example:
-
-```text
-credit_score × estimated_ltv
-```
-
-can capture the possibility that the effect of a given LTV is different for lower-credit-score borrowers than for higher-credit-score borrowers.
-
----
-
-## 5.2 Tensor-product spline
-
-Suppose:
-
-```text
-B₁(x), B₂(x), ..., Bₚ(x)
-```
-
-are the spline basis functions for `x`, and:
-
-```text
-C₁(z), C₂(z), ..., C_q(z)
-```
-
-are the spline basis functions for `z`.
-
-The interaction basis consists of:
-
-```text
-Bᵢ(x) × Cⱼ(z)
-```
-
-for every pair `(i,j)`.
-
-Illustration:
-
-```text
-                 z spline basis
-              C1   C2   C3 ... Cq
-             ┌────────────────────
-B1(x)        │ ×    ×    ×  ... ×
-B2(x)        │ ×    ×    ×  ... ×
-B3(x)        │ ×    ×    ×  ... ×
-...          │
-Bp(x)        │ ×    ×    ×  ... ×
-```
-
-The resulting terms represent a flexible two-dimensional response surface.
-
----
-
-## 5.3 Current spline configuration
-
-With:
+The active GAM configuration uses:
 
 ```yaml
 degree: 3
 num_knots: 6
 ```
 
-the implementation produces:
+The intended design is:
 
 ```text
-number of spline basis functions
-= num_knots + degree - 1
-= 6 + 3 - 1
-= 8
+numerical feature
+      ↓
+spline eligible?
+   ┌──┴──┐
+  yes    no
+   ↓      ↓
+quantile  linear
+knots
 ```
 
-Therefore one Numeric × Numeric interaction produces:
+A spline-eligible feature does not necessarily become a spline. If there are insufficient valid/unique quantiles, the feature falls back to its linear representation.
+
+The fitted representation is the source of truth during scoring.
+
+---
+
+## 5. Numeric × Numeric interactions
+
+For numeric features `x` and `z`, the interaction is conceptually:
 
 ```text
-8 × 8 = 64
+h(x,z) = Σ_i Σ_j β_ij B_i(x) C_j(z)
 ```
 
-interaction basis terms.
+where `B` and `C` are the fitted basis functions for the two variables.
 
-For:
+This permits the effect of one variable to depend on the level of the other.
+
+For example:
 
 ```text
 credit_score × estimated_ltv
 ```
 
-the interaction therefore has 64 tensor-product basis terms.
+can represent different LTV-risk relationships across credit-score levels.
+
+With six knots and degree three, the implementation's intended spline basis dimension is:
+
+```text
+6 + 3 - 1 = 8
+```
+
+before forming the tensor product.
+
+An interaction between two 8-dimensional bases therefore has up to:
+
+```text
+8 × 8 = 64
+```
+
+basis terms before any implementation-specific reduction or fallback.
 
 ---
 
-# 7. Interaction Centering
+## 6. Interaction centering
 
-A full tensor-product basis can overlap conceptually with the main-effect space.
+Tensor-product interactions can overlap with the space represented by the main effects.
 
-Without constraints, it becomes harder to say:
-
-> "This part of the fitted effect belongs to the interaction"
-
-versus:
-
-> "This part belongs to the main effects."
-
-That is undesirable for an interpretable risk model.
-
-The V2 design therefore centers the spline basis before constructing the Numeric × Numeric tensor product.
-
-For a basis function `Bᵢ(x)`:
-
-```text
-Bᵢᶜ(x) = Bᵢ(x) - E_train[Bᵢ(x)]
-```
-
-The interaction then uses:
-
-```text
-Bᵢᶜ(x) × Cⱼᶜ(z)
-```
-
-where the centering quantities are learned from training data and persisted with the fitted pipeline.
+The design therefore uses training-derived centering for the spline basis before constructing the interaction.
 
 Conceptually:
 
 ```text
-Raw spline basis
-       │
-       ▼
-Training-data centering
-       │
-       ▼
-Centered spline basis
-       │
-       ├──────────────┐
-       │              │
-       ▼              ▼
-     x basis        z basis
-       │              │
-       └──────┬───────┘
-              ▼
-       Tensor product
-              │
-              ▼
-       Interaction surface
+B_i^centered(x)
+    = B_i(x) - E_train[B_i(x)]
 ```
 
-This keeps the interaction representation more cleanly separated from the main-effect representation.
+and similarly for the second feature.
+
+The tensor product is then constructed from the centered representations.
+
+The centering state is learned during fitting and persisted with the model.
 
 ---
 
-# 8. Interaction Type 2 — Numeric × Categorical
+## 7. Numeric × Categorical interactions
 
-## 7.1 Motivation
+A numeric × categorical interaction allows the numeric relationship to vary by category.
 
-A Numeric × Categorical interaction allows the effect of a numeric variable to vary by category.
-
-For example:
+For:
 
 ```text
 estimated_ltv × occupancy_status
 ```
 
-asks whether the relationship between LTV and risk differs across occupancy categories.
-
-Instead of fitting one universal function:
+the conceptual form is:
 
 ```text
-f(estimated_ltv)
-```
-
-the model can represent:
-
-```text
-f(estimated_ltv)
-+
-category-specific deviation
-```
-
----
-
-## 7.2 Varying-effect formulation
-
-For a categorical variable `C` with a reference category:
-
-```text
-η = β₀
+η = β0
   + f(x)
-  + Σₖ I(C = k) gₖ(x)
+  + Σ_k I(C=k) g_k(x)
 ```
 
 where:
 
-- `f(x)` is the main effect
-- `gₖ(x)` is the deviation curve for category `k`
-- the omitted/reference category has no additional deviation term
+- `f(x)` is the main numeric effect;
+- `g_k(x)` is the category-specific deviation;
+- the reference category provides the baseline relationship.
 
-This is preferable to creating a completely independent spline curve for every category because the main effect remains explicit and the interaction represents the **difference from the reference relationship**.
-
----
-
-## 7.3 Illustration
-
-```text
-                 Numeric variable x
-                        │
-                 ┌──────┴──────┐
-                 │ spline basis │
-                 └──────┬──────┘
-                        │
-          ┌─────────────┼─────────────┐
-          │             │             │
-       Category A    Category B    Category C
-       reference       deviation      deviation
-          │             │             │
-          │          × spline       × spline
-          │             │             │
-          └─────────────┴─────────────┘
-                        │
-                        ▼
-                Interaction vector
-```
-
-The categorical variable uses the existing Spark `StringIndexer` + `OneHotEncoder` treatment.
-
-There is therefore no separate binary implementation.
-
-A binary categorical variable is simply the special case where the encoded categorical dimension corresponds to two levels.
+This is preferable to independently fitting an unrelated curve for every category because the interaction represents deviations from the shared main relationship.
 
 ---
 
-# 9. Interaction Pipeline Architecture
+## 8. Reuse of fitted main-effect representation
 
-The interaction implementation is deliberately placed **inside** the persisted Spark pipeline.
+A key implementation principle is that an interaction should use the **actual fitted representation** of its numeric feature.
 
-```text
-                 TRAINING DATA
-                      │
-                      ▼
-          GAMPreparationTransformer
-                      │
-          ┌───────────┴───────────┐
-          │                       │
-       Imputation          Categorical encoding
-          │                       │
-          └───────────┬───────────┘
-                      ▼
-             GAMSplineEstimator
-                      │
-                      ▼
-                GAMSplineModel
-                      │
-          ┌───────────┴───────────┐
-          │                       │
-     Main effects           Interaction stage
-          │                       │
-          │              ┌────────┴─────────┐
-          │              │                  │
-          │           Num × Num          Num × Cat
-          │              │                  │
-          │         tensor surface     varying effect
-          │              │                  │
-          └──────────────┴──────────────────┘
-                         │
-                         ▼
-                  VectorAssembler
-                         │
-                         ▼
-                Logistic Regression
-```
-
-The fitted artifact therefore contains:
+Therefore:
 
 ```text
-preprocessing
-+ categorical encoding
-+ spline knots
-+ spline support
-+ interaction state
-+ feature assembly
-+ logistic coefficients
+main effect fitted as spline
+        ↓
+interaction uses spline basis
+
+main effect falls back to linear
+        ↓
+interaction uses linear representation
 ```
 
-inside the Spark `PipelineModel`.
+This avoids fitting a different transformation for the same feature inside an interaction.
+
+It also ensures that training-time decisions are reproduced at scoring time.
 
 ---
 
-# 10. Feature Representation
+## 9. Training-only learned state
 
-The model deliberately keeps interaction outputs as **vector features** rather than creating an uncontrolled number of permanent top-level DataFrame columns.
+The following are training-derived state:
+
+- spline knots
+- spline support/bounds
+- spline-basis centering quantities
+- categorical encoding state
+- imputation values
+
+They must be learned on the training population only.
+
+Validation, test and OOT populations are transformed using the fitted training state.
+
+---
+
+## 10. Configuration
+
+Interactions are specified as feature pairs.
 
 Conceptually:
-
-```text
-Main effects
-    │
-    ├── linear numerical features
-    ├── spline basis vectors
-    └── categorical vectors
-
-Interactions
-    │
-    ├── credit_score × estimated_ltv
-    │       └── 64-dimensional vector
-    │
-    ├── credit_score × modification_flag
-    │       └── varying-effect vector
-    │
-    └── estimated_ltv × occupancy_status
-            └── varying-effect vector
-
-                    ↓
-              VectorAssembler
-                    ↓
-               LR features
-```
-
-This keeps the feature assembly manageable as the interaction configuration grows.
-
----
-
-# 11. Validation and Error Handling
-
-The interaction configuration is validated before model fitting.
-
-### Duplicate pairs
-
-Duplicate interaction specifications should be rejected rather than silently creating duplicate model terms.
-
-### Unknown features
-
-Every interaction feature must belong to the configured numerical or categorical feature universe.
-
-### Categorical × categorical
-
-This is explicitly unsupported:
-
-```text
-occupancy_status × property_type
-```
-
-results in an error rather than silently generating a high-cardinality dummy interaction.
-
-### Numeric features
-
-Numeric features used in interactions must belong to the configured numerical
-feature universe. Their representation is resolved from the fitted model:
-
-- spline if the configured spline-able feature has enough valid, unique quantiles
-- linear otherwise
-
-The interaction therefore reuses the same representation as the corresponding
-main effect, ensuring consistent transformations.
-
-### Invalid spline configuration
-
-Existing spline validation continues to apply, including:
-
-- valid degree
-- valid number of knots
-- finite bounds
-- strictly increasing internal knot values
-- sufficient feature variation
-
----
-
-# 12. Persistence and Scoring
-
-The interaction model is designed to behave like the existing GAM pipeline:
-
-```text
-Training
-────────
-fit preprocessing
-      ↓
-fit spline knots
-      ↓
-fit interaction state
-      ↓
-fit logistic regression
-      ↓
-persist PipelineModel
-
-
-Scoring
-───────
-load PipelineModel
-      ↓
-apply stored preprocessing
-      ↓
-apply stored spline knots
-      ↓
-apply stored interaction state
-      ↓
-apply stored coefficients
-      ↓
-PD
-```
-
-No scoring-time fitting occurs.
-
-This is particularly important for the monthly mortgage risk-feed use case because the same frozen model must be applied consistently to future observation months.
-
----
-
-# 13. V1 Compatibility
-
-Interaction support is optional.
-
-With:
-
-```yaml
-interactions:
-  enabled: false
-```
-
-the pipeline remains:
-
-```text
-GAMPreparationTransformer
-        ↓
-GAMSplineEstimator
-        ↓
-GAMSplineModel
-        ↓
-VectorAssembler
-        ↓
-LogisticRegression
-```
-
-No interaction terms are introduced.
-
-This provides a clean control:
-
-```text
-             ┌───────────────┐
-             │ Same data     │
-             │ Same split    │
-             │ Same target   │
-             │ Same features │
-             └───────┬───────┘
-                     │
-             ┌───────┴────────┐
-             ▼                ▼
-          GAM V1            GAM V2
-        additive        controlled interactions
-             │                │
-             └───────┬────────┘
-                     ▼
-              Compare OOT
-```
-
----
-
-# 14. Current Candidate Interactions
-
-The current V2 configuration contains five candidate interactions:
 
 ```yaml
 interactions:
@@ -752,283 +251,112 @@ interactions:
     - [credit_score, estimated_ltv]
     - [credit_score, modification_flag]
     - [estimated_ltv, occupancy_status]
-    - [dpd_trend_6m, property_type]
-    - [dpd_trend_6m, dpd_acceleration_6m]
 ```
 
-These represent five modelling hypotheses:
+The actual active pair list is maintained in `config/parameters/base.yml`.
 
-### Credit score × estimated LTV
+There is no separate configuration mechanism for binary categorical variables.
 
-Whether the risk relationship associated with leverage changes materially across borrower credit quality.
+The resolver determines the interaction type from the configured feature universe:
 
 ```text
-credit quality
-      ×
-leverage
+numeric + numeric
+    → numeric_numeric
+
+numeric + categorical
+    → numeric_categorical
+
+categorical + categorical
+    → reject
 ```
-
-### Credit score × modification flag
-
-Whether the incremental risk signal associated with credit quality differs for modified versus non-modified loans.
-
-```text
-credit quality
-      ×
-loan modification state
-```
-
-### Estimated LTV × occupancy status
-
-Whether leverage has different risk implications depending on occupancy.
-
-```text
-leverage
-      ×
-occupancy
-```
-
-### DPD trend × property type
-
-Whether the relationship between recent delinquency trend and mortgage risk differs across property types.
-
-```text
-delinquency trajectory
-      ×
-property type
-```
-
-### DPD trend × DPD acceleration
-
-Whether the effect of delinquency trend depends on the rate at which delinquency itself is changing.
-
-```text
-delinquency trajectory
-      ×
-delinquency acceleration
-```
-
-These are hypotheses to be **tested**, not assumed to be beneficial merely because they are included.
 
 ---
 
-# 15. Model Evaluation Framework
+## 11. Validation and error handling
 
-V2 should not be accepted solely because its training or validation AUC improves.
+The interaction configuration should reject:
 
-The comparison against the frozen GAM V1 benchmark should consider:
+### Unknown features
 
-### Discrimination
+Every pair member must exist in the configured numerical or categorical feature universe.
+
+### Duplicate pairs
+
+Duplicate specifications should not create duplicate model terms.
+
+### Categorical × categorical
+
+This is intentionally unsupported to avoid uncontrolled dummy interaction expansion.
+
+### Invalid spline state
+
+Spline construction must respect the existing validation requirements for degree, knot count, finite support and valid ordered knots.
+
+---
+
+## 12. Spark pipeline persistence
+
+The interaction stage belongs inside the persisted Spark modelling pipeline.
+
+Conceptually:
+
+```text
+GAMPreparationTransformer
+        ↓
+GAMSplineEstimator
+        ↓
+GAMSplineModel
+        ↓
+Interaction construction
+        ↓
+VectorAssembler
+        ↓
+Logistic Regression
+```
+
+The fitted artefact should therefore preserve the transformation state required to reproduce the same feature representation during scoring.
+
+This is particularly important for a distributed PySpark workflow: interactions should not depend on an external Pandas-only transformation that is unavailable when the saved Spark model is loaded.
+
+---
+
+## 13. Complexity control
+
+Interactions increase model dimensionality quickly.
+
+For that reason:
+
+- only economically/model-risk motivated pairs should be configured;
+- categorical × categorical interactions remain excluded;
+- spline fallback prevents fragile features from breaking fitting;
+- interaction count should remain small enough for stable fitting and review;
+- OOT performance must be assessed rather than selecting interactions solely on in-sample improvement.
+
+The objective is a **controlled GAM**, not an unrestricted interaction model.
+
+---
+
+## 14. Evaluation principle
+
+An interaction is valuable only if it adds stable information beyond the corresponding additive main effects.
+
+Evaluation should therefore compare:
+
+```text
+GAM additive benchmark
+        vs
+GAM + controlled interactions
+```
+
+using:
 
 - ROC-AUC
 - PR-AUC
 - KS
-- top-5% capture
-- top-10% capture
-- top-20% capture
-
-### Probability quality
-
-- log loss
 - Brier score
-- calibration curve
-- ECE
-- MCE
-- O/E
+- log loss
+- calibration
+- risk-decile capture/lift
+- temporal/OOT stability
 
-### Generalization
-
-```text
-Train → Validation → OOT
-```
-
-The OOT result receives particular weight because the objective is future monthly risk scoring.
-
-### Stability
-
-Assess whether the interaction model produces:
-
-- unstable coefficients
-- extreme predictions
-- excessive sensitivity
-- degraded performance in OOT periods
-- materially worse calibration
-
-### Interpretability
-
-Each retained interaction should have a defensible business/risk interpretation.
-
----
-
-# 16. Interaction Acceptance Principle
-
-An interaction should earn its place in the model.
-
-A useful decision framework is:
-
-```text
-Does the interaction improve
-OOT risk discrimination?
-          │
-          ├── No ──► Reject
-          │
-          ▼
-Does it improve or preserve
-probability quality?
-          │
-          ├── No ──► Strong evidence required
-          │
-          ▼
-Is the effect stable OOT?
-          │
-          ├── No ──► Reject
-          │
-          ▼
-Can the interaction be
-explained and governed?
-          │
-          ├── No ──► Reject
-          │
-          ▼
-       RETAIN
-```
-
-The goal is therefore **not maximum flexibility**.
-
-The goal is:
-
-> **the smallest interpretable interaction set that materially improves future risk prediction without sacrificing probability quality or stability.**
-
----
-
-# 17. Testing Requirements
-
-Before running the full mortgage dataset, the interaction implementation should be tested on a small deterministic fixture.
-
-Minimum tests:
-
-### Configuration
-
-- interactions disabled
-- valid Numeric × Numeric
-- valid Numeric × Categorical
-- categorical × categorical rejected
-- unknown feature rejected
-- duplicate pair rejected
-
-### Numeric × Numeric
-
-- correct interaction dimension
-- correct basis-product construction
-- centering is based on training data
-- scoring reuses stored centering values
-- no new knots are fitted
-
-### Numeric × Categorical
-
-- correct encoded dimension
-- reference category treatment
-- varying-effect terms generated correctly
-- unseen categories follow existing categorical handling
-
-### Pipeline
-
-- interactions appear in the assembled feature vector
-- disabled interactions reproduce V1 feature construction
-- model saves successfully
-- model loads successfully
-- predictions before/after save-load are identical within numerical tolerance
-
-### Regression protection
-
-```text
-V1 disabled
-     ↓
-same transformation
-     ↓
-same feature vector
-     ↓
-same coefficients
-     ↓
-same predictions
-```
-
-This test is particularly important because GAM V1 is the frozen benchmark.
-
----
-
-# 18. Governance Considerations
-
-The interaction configuration should be treated as part of the model specification.
-
-For every production candidate, record:
-
-```text
-Model version
-    │
-    ├── feature configuration
-    ├── spline configuration
-    ├── interaction configuration
-    ├── training data period
-    ├── validation period
-    ├── OOT period
-    ├── fitted transformation state
-    └── fitted coefficients
-```
-
-An interaction should not be added merely through an ad-hoc notebook modification.
-
-The configuration, code, tests, model artifact, and evaluation results should move together through version control.
-
----
-
-# 19. Summary
-
-GAM V2 extends the frozen additive GAM V1 benchmark with a deliberately constrained interaction framework.
-
-```text
-                 GAM V2
-                    │
-        ┌───────────┴───────────┐
-        │                       │
-    Main effects            Interactions
-        │                       │
-   ┌────┴────┐            ┌─────┴─────┐
-   │         │            │           │
- linear   spline       Num × Num   Num × Cat
-                          │           │
-                       tensor      varying
-                       product      effect
-```
-
-The key architectural decision is that interactions remain **first-class, persisted, configurable model components**, rather than being an uncontrolled feature-engineering layer.
-
-The framework intentionally supports:
-
-```text
-Numeric × Numeric       ✓
-Numeric × Categorical   ✓
-Categorical × Numeric   ✓
-Categorical × Categorical ✗
-Binary as separate type ✗
-```
-
-The V2 model should ultimately be judged against the frozen V1 GAM using **OOT discrimination, calibration, stability, and interpretability**, rather than in-sample fit alone.
-
-The central modelling philosophy is:
-
-```text
-Numerical features
-      │
-      ├── linear by default
-      │
-      └── selected features are spline-able
-                    │
-             enough quantiles?
-                │         │
-               Yes        No
-                │         │
-             spline     linear
-```
-
-Interactions then operate on those **actual fitted representations**, keeping the model flexible enough to capture meaningful risk relationships without turning it into an unrestricted nonlinear model.
+A small improvement in discrimination that materially damages calibration or temporal stability should not automatically be treated as a successful model enhancement.

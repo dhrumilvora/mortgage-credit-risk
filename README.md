@@ -1,74 +1,204 @@
-# Mortgage Credit Risk — V2
+# Mortgage Credit Risk Modelling
 
-V2 is a configuration-driven, point-in-time behavioural credit-risk pipeline for Freddie Mac Single-Family Loan-Level data. It builds loan observations at defined ages, trains a model using information available at each observation point, and evaluates the risk of serious delinquency over the next 12 months.
+A configuration-driven **point-in-time behavioural mortgage credit-risk modelling framework** built on Freddie Mac Single-Family Loan-Level data and PySpark.
 
-V3 is maintained separately and is not covered by this README.
+The project focuses on predicting a serious-delinquency outcome from information available at a defined observation point in a mortgage's life, while maintaining a strict temporal boundary between predictors and future outcomes.
 
-## What V2 predicts
+> **Current active modelling path:** GAM with configurable nonlinear spline effects, controlled interactions, and macroeconomic features.
 
-The active target is `future_90dpd_12m`.
+## What the model predicts
 
-For an eligible loan observed at age *t*, the target is positive when either of the following occurs between ages *t + 1* and *t + 12*:
+The active target is:
 
-- numeric delinquency status reaches `>= 3` (approximately 90+ DPD); or
+```text
+future_90dpd
+```
+
+For an eligible loan observed at age `t`, the target is positive when, during `t + 1` through `t + 12`, either:
+
+- numeric delinquency status reaches `>= 3` (approximately 90+ DPD), or
 - the loan reaches REO acquisition status (`RA`).
 
-This is a PD-like serious-delinquency outcome. It is not a realised-loss, LGD, EAD, or expected-loss model.
+This is a **PD-like serious-delinquency outcome**. It is not an LGD, EAD, realised-loss, or expected-loss model.
 
 ## Current configuration
 
-| Setting | Active value |
+| Setting | Active configuration |
 |---|---|
 | Modelling approach | Behavioural / point-in-time |
-| Processing engine | PySpark |
-| Observation ages | 6 and 12 months |
+| Engine | PySpark |
+| Observation ages | 2, 4, 6, 8, 10, 12 months |
 | Prediction horizon | 12 months |
-| Training vintages | 2015–2018 |
-| Chronological validation vintages | 2019–2020 |
-| Out-of-time vintages | 2021–2022 |
-| Supported V2 models | Logistic regression and XGBoost |
-| Active algorithm | XGBoost |
-| SHAP configuration | Enabled; generated only by the Pandas evaluation path |
+| Training vintages | 2015–2020 |
+| Test vintage | 2021 |
+| Out-of-time vintage | 2022 |
+| Active algorithm | GAM |
+| GAM spline degree | 3 |
+| GAM knots | 6 quantile-based knots |
+| GAM interactions | Enabled |
+| Macro features | Enabled |
+| SHAP | Disabled in active evaluation configuration |
+| Model version | `gam_macro_weighted_semi_quarterly` |
 
-The active configuration skips raw-file ingestion but enables preprocessing, modelling, and evaluation. Canonical origination and performance datasets must therefore already be available in the configured intermediate paths before a run.
+The checked-in configuration currently skips both raw ingestion and preprocessing and expects canonical/intermediate model-input data to already exist.
 
 ## Leakage boundary
 
-Each V2 record has grain `loan_id × observation_age`. A loan is eligible only when it has an exact monthly observation at the configured age, has not already experienced serious delinquency, and has not terminated at that observation point.
+Each model observation has grain:
 
 ```text
-Origination data + performance history through age t  -> predictors
-Performance from age t + 1 through age t + 12        -> target only
+loan_id × observation_age
 ```
 
-The forward outcome is observable when the full horizon is available, a serious-delinquency event occurs, or a voluntary payoff/maturity (`ZBC = 01`) occurs before the horizon ends. Other incomplete early exits without an event are excluded.
+Predictors may use information available **at or before** the observation age.
 
-## V2 features
+The forward outcome uses:
 
-The feature contract is defined in [config/parameters/behavioral.yml](config/parameters/behavioral.yml). It includes:
+```text
+observation_age + 1 ... observation_age + 12
+```
 
-- origination risk, leverage, and structure: credit score, DTI, LTV/CLTV, UPB, MI, and borrower count;
-- origination categorical attributes: occupancy, property type, loan purpose, channel, programme flags, and state;
-- point-in-time loan state: current UPB and rate, estimated LTV, loan age, and remaining term;
-- current and lifetime behavioural history: current DPD, maximum DPD to date, delinquency-month count, and delinquency recency;
-- recent behavioural windows: 3- and 6-month counts of 30+/60+ DPD, maximum DPD, and delinquency months; and
-- post-origination trajectory: percentage UPB change from origination.
+Conceptually:
 
-All behavioural fields are constructed using information available at or before the observation month.
+```text
+Performance history through t  ──► FEATURES
+Performance after t            ──► TARGET ONLY
+```
+
+Loans with prior serious delinquency or an invalid observation state are excluded according to the configured eligibility rules.
+
+Voluntary payoff/maturity (`ZBC = 01`) is treated as a non-event when no prior serious event has occurred; other incomplete early exits are handled according to the target construction rules.
+
+## Feature contract
+
+The behavioural configuration includes:
+
+### Origination risk and structure
+- credit score
+- original DTI
+- original LTV / CLTV
+- original UPB
+- mortgage insurance percentage
+- borrower count
+- loan/programme characteristics
+
+### Point-in-time loan state
+- current UPB
+- current interest rate
+- estimated LTV
+- calculated loan age
+- remaining months to legal maturity
+- balance composition
+
+### Lifetime behavioural history
+- maximum DPD to date
+- delinquency months to date
+- months since last delinquency
+- historical modification/payment-deferral/assistance/disaster indicators
+
+### Recent behavioural windows
+- 3-month and 12-month delinquency counts
+- maximum recent DPD
+- modification/payment-deferral/assistance/disaster counts
+- rate-step activity
+
+### Delinquency trajectory
+- current delinquency streak
+- maximum recent delinquency streak
+- months since recent 30/60 DPD
+- DPD trend
+- DPD acceleration
+- delinquency-intensity change
+- DPD-severity change
+- delinquency episode count
+- relapse-after-current indicator
+
+### Loan trajectory
+- UPB percentage change from origination
+- interest-rate change from origination
+
+### Macroeconomic variables
+- unemployment rate
+- 30-year mortgage rate
+- purchase-only HPI
+- Federal Funds rate
+
+### Categorical variables
+Property type, occupancy, loan purpose, channel, programme indicators, state, modification/payment-deferral indicators, disaster delinquency, and borrower-assistance-plan indicators.
+
+The source of truth for the feature contract is `config/parameters/behavioral.yml`.
+
+## GAM architecture
+
+The active GAM uses a **linear-by-default** representation.
+
+Selected numerical variables are eligible for spline transformation. Spline knots are learned from training data using quantiles. If a feature cannot support the requested spline basis because of insufficient valid/unique values, the implementation falls back to a linear representation.
+
+The active spline configuration is:
+
+```yaml
+degree: 3
+num_knots: 6
+method: quantile
+```
+
+The GAM also supports explicitly configured interactions.
+
+```text
+Main effects
+    ├── linear numerical effects
+    ├── spline numerical effects
+    └── categorical effects
+
+Interactions
+    ├── numeric × numeric
+    └── numeric × categorical
+
+                 ↓
+          VectorAssembler
+                 ↓
+        Logistic regression
+```
+
+Interactions are deliberately controlled rather than generated exhaustively.
+
+## Temporal evaluation
+
+The active configuration separates:
+
+```text
+2015–2020  → training population with configured validation split
+2021       → test
+2022       → out-of-time evaluation
+```
+
+The configured validation split is chronological/yearly within the training population.
+
+The 2022 OOT population is held out from model and preprocessing fitting.
 
 ## Pipeline
 
 ```text
-Canonical origination + performance Parquet
-  -> loan-month master dataset
-  -> eligible behavioural risk sets at ages 6 and 12
-  -> leakage-safe V2 features + forward 12-month target
-  -> chronological training, validation, and OOT populations
-  -> training-only preprocessing + configured V2 model
-  -> metrics, charts, threshold search, and (Pandas-only) SHAP outputs
+Canonical origination + performance data
+              ↓
+        loan-month master
+              ↓
+     behavioural risk sets
+              ↓
+ leakage-safe feature/target construction
+              ↓
+ chronological train / validation / test / OOT
+              ↓
+     training-only preprocessing
+              ↓
+          GAM training
+              ↓
+      persisted model artifacts
+              ↓
+ evaluation + threshold analysis
 ```
 
-Run the pipeline from the project root:
+Run from the project root:
 
 ```python
 from pathlib import Path
@@ -77,47 +207,31 @@ from credit_risk import run_pipeline
 run_pipeline(Path("."))
 ```
 
-The notebook [notebooks/main.ipynb](notebooks/main.ipynb) provides a documented V2 runbook with configuration inspection and artifact review.
-
-## Prerequisites
-
-1. Install the project dependencies and activate the project environment.
-2. Configure Java and PySpark for the selected local Spark setup.
-3. Ensure canonical source data exists for all configured vintages, because raw ingestion is disabled.
-4. Review `config/parameters/base.yml` and `config/parameters/behavioral.yml` before running.
+Review `config/parameters/base.yml` and `config/parameters/behavioral.yml` before execution.
 
 ## Outputs
 
-All paths are rooted at `data/` by default.
+The pipeline writes versioned artefacts under `data/`, including:
 
-| Location | Contents |
-|---|---|
-| `03_processed/behavioral/.../model-input.parquet` | V2 point-in-time feature/target population |
-| `04_model_split/` | Training, validation, and OOT populations |
-| `05_artifacts/<version>/<algorithm>/` | Model, preprocessor, configuration, and training metadata |
-| `05_artifacts/<version>/<algorithm>/model_evaluation/<dataset>/` | Evaluation metrics, workbook, charts, threshold summary, and Pandas-only SHAP artifacts |
-| `06_reporting/data_quality/` | Optional data-quality reporting artifacts |
-
-Evaluation includes classification metrics, ROC-AUC, PR-AUC, KS, Brier score, log loss, risk deciles, calibration tables, charts, and configured threshold selection.
-
-## Model support
-
-V2 documents two supported modelling choices:
-
-- **Logistic regression** for an interpretable baseline.
-- **XGBoost** for the active nonlinear model.
-
-Select the model with `parameters.modelling.algorithm`; the current value is `xgboost`. The PySpark XGBoost implementation is the active training path.
-
-SHAP is currently implemented in the Pandas evaluation path. When the selected engine is PySpark, evaluation logs that SHAP is skipped even when `evaluation.shap.enabled` is true. XGBoost SHAP values, when generated through the Pandas path, are on the raw-margin (log-odds) scale.
+- model-input Parquet data
+- train/validation/test/OOT populations
+- fitted model and preprocessing artefacts
+- configuration and training metadata
+- evaluation metrics and reports
+- risk-decile analysis
+- calibration tables and charts
+- threshold-selection outputs
+- configured data-quality artefacts
 
 ## Documentation
 
-- [V2 project flow](docs/project_flow.md)
-- [V2 modelling methodology](docs/modelling-methodology.md)
+- [Project flow](docs/project_flow.md)
+- [Modelling methodology](docs/modelling-methodology.md)
+- [GAM interaction architecture](docs/gam_interactions.md)
 - [Credit-risk reference guide](docs/credit-risk-reference-guide.md)
-- [V1 to V2 model-evolution rationale](docs/V1_to_V2_detailed_rationale.md)
+- [V1 → V2 detailed rationale](docs/V1_to_V2_detailed_rationale.md)
+- [Experimental trajectory-conditioned PD idea](docs/potentially%20in%20future/trajectory_conditioned_dynamic_mortgage_pd_idea.md)
 
-## Important note
+## Research status
 
-This is a research framework. Model outputs, calibration, stability, fairness, monitoring, and operational controls require independent validation before any credit-decisioning use.
+This repository is a research/model-development framework. Discrimination, calibration, temporal stability, fairness, monitoring, independent validation, and production governance would be required before operational credit-decisioning use.
