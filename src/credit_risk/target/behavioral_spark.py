@@ -400,7 +400,7 @@ def _build_observation_target_spark(
             ),
         )
         .withColumn(
-            "future_90dpd_12m",
+            "future_90dpd",
             F.coalesce(
                 F.col("ever_serious_delinquency"),
                 F.lit(False),
@@ -414,7 +414,7 @@ def _build_observation_target_spark(
         .select(
             "loan_id",
             "observation_age",
-            "future_90dpd_12m",
+            "future_90dpd",
         )
     )
 
@@ -437,7 +437,7 @@ def build_behavioral_target_spark(
 
     Target definition:
 
-        future_90dpd_12m = 1
+        future_90dpd = 1
 
     when serious delinquency occurs between:
 
@@ -535,7 +535,7 @@ def build_behavioral_target_spark(
                 F.lit(None).cast("int"),
             )
             .withColumn(
-                "future_90dpd_12m",
+                "future_90dpd",
                 F.lit(None).cast("byte"),
             )
         )
