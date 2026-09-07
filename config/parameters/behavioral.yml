@@ -18,7 +18,7 @@ parameters:
       - 3
       - 12
 
-    prediction_horizon_months: 12
+    prediction_horizon_months: 6
 
   # ============================================================
   # MODELLING
@@ -182,5 +182,5 @@ parameters:
 
   target:
 
-    name: future_90dpd_12m
-    horizon_months: 12
+    name: future_90dpd
+    horizon_months: 3

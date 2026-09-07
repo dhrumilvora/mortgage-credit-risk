@@ -120,9 +120,9 @@ parameters:
   # ============================================================
 
   modelling:
-    skip: true
-    use_existing_splits: false
-    version: gam_macro_weighted_semi_quarterly
+    skip: false
+    use_existing_splits: true
+    version: hgam_test
 
     # ----------------------------------------------------------
     # Training / OOT vintage split
@@ -211,100 +211,230 @@ parameters:
     # ----------------------------------------------------------
 
     gam:
+
+      # ==========================================================
+      # Model family
+      #
+      # gam  = current/frozen GAM implementation
+      # hgam = hierarchical GAM extension
+      #
+      # Keep this as "gam" for the current Phase 1 model.
+      # ==========================================================
+      model_type: hgam
+
+
+      # ==========================================================
+      # Class weighting
+      # ==========================================================
       class_weighting:
         enabled: false
         positive_weight: 2.0
         negative_weight: 1.0
+
+
+      # ==========================================================
+      # Spline configuration
+      # ==========================================================
       spline:
         degree: 3
         num_knots: 6
         knot_strategy: quantile
 
+
+      # ==========================================================
+      # Experimental / screening configuration
+      # ==========================================================
       experiment:
         screening_sample_fraction: 0.10
         screening_seed: 42
 
+
+      # ==========================================================
+      # Feature transformations
+      #
+      # default_numerical:
+      #   Features not explicitly listed below remain linear.
+      #
+      # spline:
+      #   Features represented using finite B-spline bases.
+      #
+      # Macro variables are currently included as nonlinear
+      # candidates in this V4 configuration.
+      # ==========================================================
       feature_transform:
         default_numerical: linear
 
-        # --------------------------------------------------------
-        # Nonlinear spline features
-        #
-        # Macro variables are intentionally NOT included here.
-        # They remain linear in V4 to isolate their incremental
-        # contribution before testing nonlinear macro effects.
-        # --------------------------------------------------------
-
         spline:
 
+          # ------------------------------------------------------
           # Structural / borrower risk
+          # ------------------------------------------------------
           - credit_score
           - original_dti
           - original_ltv
           - original_cltv
           - estimated_ltv
 
+          # ------------------------------------------------------
           # Loan economics
+          # ------------------------------------------------------
           - current_interest_rate
           - current_actual_upb
           - remaining_months_to_legal_maturity
+          - rate_change_from_origination
 
+          # ------------------------------------------------------
           # Behavioural trajectory
+          # ------------------------------------------------------
           - dpd_trend_6m
           - dpd_acceleration_6m
           - dpd_severity_change_6m
 
+          # ------------------------------------------------------
           # Additional behavioural shape
+          # ------------------------------------------------------
           - current_delinquency_streak
           - max_delinquency_streak_12m
           - months_since_last_30dpd
           - months_since_last_60dpd
           - delinquency_intensity_change_6m
+
+          # ------------------------------------------------------
           # Macro-economic factors
+          #
+          # These are nonlinear candidates in V4.
+          # ------------------------------------------------------
           - unemployment_rate
           - mortgage_rate_30y
           - hpi_purchase_only
           - fed_funds_rate
-      # ----------------------------------------------------------
-      # Interactions
-      # ----------------------------------------------------------
 
+
+      # ==========================================================
+      # Explicit interactions
+      # ==========================================================
       interactions:
         enabled: true
 
         pairs:
 
-          # Existing
+          # ------------------------------------------------------
+          # Existing structural / behavioural interactions
+          # ------------------------------------------------------
           - [credit_score, estimated_ltv]
           - [credit_score, modification_flag]
           - [estimated_ltv, occupancy_status]
           - [dpd_trend_6m, property_type]
           - [dpd_trend_6m, dpd_acceleration_6m]
 
-          # Newly tested
+          # ------------------------------------------------------
+          # Affordability / borrower quality
+          # ------------------------------------------------------
           - [original_dti, credit_score]
+
+          # ------------------------------------------------------
+          # Behavioural deterioration × exposure
+          # ------------------------------------------------------
           - [dpd_trend_6m, estimated_ltv]
           - [dpd_acceleration_6m, estimated_ltv]
 
-          # Full structural × behavioural block
+          # ------------------------------------------------------
+          # Structural × behavioural block
+          # ------------------------------------------------------
           - [dpd_trend_6m, credit_score]
           - [dpd_acceleration_6m, credit_score]
           - [dpd_severity_change_6m, credit_score]
           - [delinquency_intensity_change_6m, credit_score]
 
+          # ------------------------------------------------------
           # Behavioural deterioration × exposure
+          # ------------------------------------------------------
           - [dpd_severity_change_6m, estimated_ltv]
           - [delinquency_intensity_change_6m, estimated_ltv]
           - [current_delinquency_streak, estimated_ltv]
 
+          # ------------------------------------------------------
           # Affordability × collateral / borrower quality
+          # ------------------------------------------------------
           - [original_dti, estimated_ltv]
           - [original_dti, original_ltv]
 
-          # Rate pressure × affordability
+          # ------------------------------------------------------
+          # Rate pressure × affordability / exposure
+          # ------------------------------------------------------
           - [current_interest_rate, original_dti]
           - [rate_change_from_origination, original_dti]
           - [rate_change_from_origination, estimated_ltv]
+
+
+      # ==========================================================
+      # Hierarchical GAM (HGAM)
+      #
+      # These settings are only used when:
+      #
+      #     model_type: hgam
+      #
+      # They have no effect on the existing GAM path.
+      # ==========================================================
+      hgam:
+
+        # --------------------------------------------------------
+        # Grouping structure
+        #
+        # Exactly one grouping feature is used per HGAM model.
+        #
+        # Examples:
+        #   property_state
+        #   msa
+        # --------------------------------------------------------
+        grouping:
+          feature: property_state
+
+
+        # --------------------------------------------------------
+        # Hierarchical group intercept
+        #
+        # Adds a group-level deviation around the global intercept.
+        # The implementation should shrink these deviations toward
+        # zero rather than treating every group as an unrestricted
+        # fixed effect.
+        # --------------------------------------------------------
+        intercept:
+          enabled: true
+
+
+        # --------------------------------------------------------
+        # Group-varying smooths
+        #
+        # The global smooth remains shared across all groups.
+        # Each configured feature may additionally have a
+        # group-specific deviation smooth, subject to shrinkage.
+        #
+        # Start with ONE feature for HGAM V1.
+        # --------------------------------------------------------
+        varying_smooths:
+          enabled: true
+
+          features:
+            - dpd_trend_6m
+            - dpd_acceleration_6m
+            - dpd_severity_change_6m
+            - delinquency_intensity_change_6m
+            - estimated_ltv
+            - rate_change_from_origination
+            - credit_score
+
+        # --------------------------------------------------------
+        # Hierarchical shrinkage
+        #
+        # These are configuration placeholders for the HGAM
+        # fitting layer. The actual interpretation will depend
+        # on the penalised fitting implementation.
+        # --------------------------------------------------------
+        shrinkage:
+          enabled: true
+          group_intercept_penalty: 1.0
+          varying_smooth_penalty: 1.0
 
 
   # ============================================================

@@ -1,6 +1,7 @@
 """Spark GAM V2 modelling utilities.
 
-GAM V2 is an additive Generalized Additive Model with optional interactions:
+GAM V2 is an additive Generalized Additive Model with optional interactions.
+The same pipeline can optionally be switched to a hierarchical GAM (HGAM):
 
     logit(PD) = beta_0 + sum_j f_j(X_j)
 
@@ -782,6 +783,146 @@ class GAMInteractionModel(
             )
 
         return result
+
+
+# ======================================================================
+# GAM / HGAM MODEL TYPE
+# ======================================================================
+
+
+def _get_gam_model_type(config: dict) -> str:
+    """Return the configured GAM model family.
+
+    Supported values are ``gam`` and ``hgam``. Missing configuration
+    defaults to ``gam`` so existing configurations remain unchanged.
+    """
+
+    gam_config = config["parameters"]["modelling"]["gam"]
+    model_type = gam_config.get("model_type", "gam")
+
+    if model_type not in {"gam", "hgam"}:
+        raise ValueError(
+            "gam.model_type must be one of 'gam' or 'hgam'. "
+            f"Got: {model_type!r}"
+        )
+
+    return model_type
+
+
+def _get_hgam_config(config: dict) -> dict:
+    """Return and validate the HGAM-specific configuration."""
+
+    gam_config = config["parameters"]["modelling"]["gam"]
+    hgam_config = gam_config.get("hgam", {})
+
+    if not isinstance(hgam_config, dict):
+        raise ValueError("gam.hgam must be a mapping.")
+
+    grouping_config = hgam_config.get("grouping", {})
+    if not isinstance(grouping_config, dict):
+        raise ValueError("gam.hgam.grouping must be a mapping.")
+
+    grouping_feature = grouping_config.get("feature")
+    if not grouping_feature:
+        raise ValueError(
+            "HGAM requires gam.hgam.grouping.feature."
+        )
+
+    features = config["parameters"]["modelling"]["features"]
+    numerical_features = set(features.get("numerical_features", []))
+    categorical_features = set(features.get("categorical_features", []))
+
+    if grouping_feature not in categorical_features:
+        if grouping_feature in numerical_features:
+            raise ValueError(
+                "HGAM grouping feature must be categorical. "
+                f"'{grouping_feature}' is configured as numerical."
+            )
+        raise ValueError(
+            "HGAM grouping feature is not configured as a categorical "
+            "modelling feature. "
+            f"Unknown feature: {grouping_feature!r}"
+        )
+
+    varying_config = hgam_config.get("varying_smooths", {})
+    if not isinstance(varying_config, dict):
+        raise ValueError(
+            "gam.hgam.varying_smooths must be a mapping."
+        )
+
+    varying_enabled = bool(varying_config.get("enabled", False))
+    varying_features = list(varying_config.get("features", []))
+
+    if len(varying_features) != len(set(varying_features)):
+        raise ValueError(
+            "HGAM varying smooth features must be unique."
+        )
+
+    unknown_varying = sorted(
+        set(varying_features) - numerical_features
+    )
+    if unknown_varying:
+        raise ValueError(
+            "HGAM varying smooth features must be numerical modelling "
+            f"features. Unknown features: {unknown_varying}"
+        )
+
+    if varying_enabled and not varying_features:
+        raise ValueError(
+            "HGAM varying_smooths.enabled=true requires at least one feature."
+        )
+
+    # A varying smooth must actually be spline-backed. The final fitted
+    # representation is checked again by HGAMGroupEffectEstimator.
+    spline_features = set(
+        gam_config.get("feature_transform", {}).get("spline", [])
+    )
+    unsupported_varying = sorted(
+        set(varying_features) - spline_features
+    )
+    if unsupported_varying:
+        raise ValueError(
+            "HGAM varying smooth features must also be configured as GAM "
+            "spline features. "
+            f"Missing from gam.feature_transform.spline: {unsupported_varying}"
+        )
+
+    intercept_config = hgam_config.get("intercept", {})
+    if not isinstance(intercept_config, dict):
+        raise ValueError("gam.hgam.intercept must be a mapping.")
+
+    shrinkage_config = hgam_config.get("shrinkage", {})
+    if not isinstance(shrinkage_config, dict):
+        raise ValueError("gam.hgam.shrinkage must be a mapping.")
+
+    if shrinkage_config.get("enabled", True):
+        group_penalty = float(
+            shrinkage_config.get("group_intercept_penalty", 1.0)
+        )
+        smooth_penalty = float(
+            shrinkage_config.get("varying_smooth_penalty", 1.0)
+        )
+
+        if group_penalty <= 0.0:
+            raise ValueError(
+                "HGAM group_intercept_penalty must be greater than 0."
+            )
+        if smooth_penalty <= 0.0:
+            raise ValueError(
+                "HGAM varying_smooth_penalty must be greater than 0."
+            )
+
+    regularization = hgam_config.get("regularization", {})
+    if not isinstance(regularization, dict):
+        raise ValueError("gam.hgam.regularization must be a mapping.")
+
+    reg_param = float(regularization.get("reg_param", 0.01))
+    if reg_param < 0.0:
+        raise ValueError(
+            "HGAM regularization.reg_param must be non-negative."
+        )
+
+    return hgam_config
 
 
 # ======================================================================
@@ -1990,6 +2131,486 @@ def _build_gam_preparation_stages(
 
 
 # ======================================================================
+# HGAM GROUP EFFECTS
+# ======================================================================
+
+
+class HGAMGroupEffectEstimator(
+    Estimator,
+    DefaultParamsReadable,
+    DefaultParamsWritable,
+):
+    """Build frozen HGAM group-intercept and varying-smooth columns.
+
+    The global GAM effects remain unchanged. Hierarchical effects are
+    represented as group indicators and group-by-global-spline deviations.
+    Their feature scaling controls their relative L2 shrinkage when the
+    downstream Spark LogisticRegression is fitted.
+    """
+
+    groupingFeature = Param(
+        Params._dummy(),
+        "groupingFeature",
+        "Categorical feature defining HGAM groups.",
+        TypeConverters.toString,
+    )
+    groupInterceptEnabled = Param(
+        Params._dummy(),
+        "groupInterceptEnabled",
+        "Whether group-level intercept deviations are included.",
+        TypeConverters.toBoolean,
+    )
+    varyingSmoothFeatures = Param(
+        Params._dummy(),
+        "varyingSmoothFeatures",
+        "Numerical spline features with group-varying deviations.",
+        TypeConverters.toList,
+    )
+    groupInterceptPenalty = Param(
+        Params._dummy(),
+        "groupInterceptPenalty",
+        "Relative shrinkage strength for group intercepts.",
+        TypeConverters.toFloat,
+    )
+    varyingSmoothPenalty = Param(
+        Params._dummy(),
+        "varyingSmoothPenalty",
+        "Relative shrinkage strength for varying smooths.",
+        TypeConverters.toFloat,
+    )
+    shrinkageEnabled = Param(
+        Params._dummy(),
+        "shrinkageEnabled",
+        "Whether hierarchical feature scaling is enabled.",
+        TypeConverters.toBoolean,
+    )
+
+    @keyword_only
+    def __init__(
+        self,
+        groupingFeature: str = "",
+        groupInterceptEnabled: bool = True,
+        varyingSmoothFeatures: list[str] | None = None,
+        groupInterceptPenalty: float = 1.0,
+        varyingSmoothPenalty: float = 1.0,
+        shrinkageEnabled: bool = True,
+    ) -> None:
+        super().__init__()
+        self._setDefault(
+            groupingFeature="",
+            groupInterceptEnabled=True,
+            varyingSmoothFeatures=[],
+            groupInterceptPenalty=1.0,
+            varyingSmoothPenalty=1.0,
+            shrinkageEnabled=True,
+        )
+        self.setParams(
+            groupingFeature=groupingFeature,
+            groupInterceptEnabled=groupInterceptEnabled,
+            varyingSmoothFeatures=varyingSmoothFeatures or [],
+            groupInterceptPenalty=groupInterceptPenalty,
+            varyingSmoothPenalty=varyingSmoothPenalty,
+            shrinkageEnabled=shrinkageEnabled,
+        )
+
+    @keyword_only
+    def setParams(
+        self,
+        groupingFeature: str | None = None,
+        groupInterceptEnabled: bool | None = None,
+        varyingSmoothFeatures: list[str] | None = None,
+        groupInterceptPenalty: float = 1.0,
+        varyingSmoothPenalty: float = 1.0,
+        shrinkageEnabled: bool = True,
+    ) -> "HGAMGroupEffectEstimator":
+        return self._set(**self._input_kwargs)
+
+    @staticmethod
+    def _basis_columns(
+        dataset: DataFrame,
+        feature: str,
+    ) -> list[str]:
+        prefix = f"{feature}_spline_"
+        columns = [
+            column
+            for column in dataset.columns
+            if column.startswith(prefix)
+            and column[len(prefix):].isdigit()
+        ]
+        return sorted(
+            columns,
+            key=lambda column: int(column.rsplit("_", 1)[1]),
+        )
+
+    @staticmethod
+    def _encoded_dimension(
+        dataset: DataFrame,
+        feature: str,
+    ) -> int:
+        encoded_column = f"__encoded_{feature}"
+        if encoded_column not in dataset.columns:
+            raise ValueError(
+                f"Expected encoded HGAM grouping column "
+                f"'{encoded_column}' not found."
+            )
+
+        dimension = dataset.schema[encoded_column].metadata.get(
+            "ml_attr",
+            {},
+        ).get("num_attrs")
+
+        if dimension is None:
+            raise ValueError(
+                "Unable to determine encoded dimensionality for "
+                f"HGAM grouping feature '{feature}'."
+            )
+
+        dimension = int(dimension)
+        if dimension < 1:
+            raise ValueError(
+                f"Invalid encoded dimensionality for '{feature}': {dimension}"
+            )
+
+        return dimension
+
+    def _fit(self, dataset: DataFrame) -> "HGAMGroupEffectModel":
+        grouping_feature = self.getOrDefault(self.groupingFeature)
+        group_intercept_enabled = self.getOrDefault(
+            self.groupInterceptEnabled
+        )
+        varying_features = list(
+            self.getOrDefault(self.varyingSmoothFeatures)
+        )
+        # These values are fitted from the actual upstream representation.
+        # Do not read them as Estimator Params: they are Model outputs and are
+        # only known after the spline stage has run.
+        group_intercept_penalty = float(
+            self.getOrDefault(self.groupInterceptPenalty)
+        )
+        varying_smooth_penalty = float(
+            self.getOrDefault(self.varyingSmoothPenalty)
+        )
+        shrinkage_enabled = self.getOrDefault(self.shrinkageEnabled)
+
+        encoded_column = f"__encoded_{grouping_feature}"
+        if encoded_column not in dataset.columns:
+            raise ValueError(
+                f"HGAM grouping column '{encoded_column}' is missing "
+                "after categorical encoding."
+            )
+
+        group_dimension = self._encoded_dimension(
+            dataset,
+            grouping_feature,
+        )
+
+        # Reuse the representation selected by the existing GAM spline stage.
+        # A configured spline is opportunistic: if the fitted spline basis is
+        # available, HGAM varies that basis by group. If the GAM fell back to
+        # linear because the training data did not support the requested knots,
+        # HGAM varies the imputed linear representation instead.
+        varying_sizes: dict[str, int] = {}
+        varying_representations: dict[str, str] = {}
+
+        for feature in varying_features:
+            basis_columns = self._basis_columns(dataset, feature)
+
+            if basis_columns:
+                varying_representations[feature] = "spline"
+                varying_sizes[feature] = len(basis_columns) * group_dimension
+                continue
+
+            linear_column = f"__imputed_{feature}"
+            if linear_column not in dataset.columns:
+                raise ValueError(
+                    f"HGAM varying feature '{feature}' has neither a fitted "
+                    "spline basis nor an imputed linear representation."
+                )
+
+            varying_representations[feature] = "linear"
+            varying_sizes[feature] = group_dimension
+
+        return HGAMGroupEffectModel(
+            groupingFeature=grouping_feature,
+            groupDimension=group_dimension,
+            groupInterceptEnabled=group_intercept_enabled,
+            varyingSmoothFeatures=varying_features,
+            varyingSmoothSizes=json.dumps(varying_sizes, sort_keys=True),
+            varyingRepresentations=json.dumps(
+                varying_representations,
+                sort_keys=True,
+            ),
+            groupInterceptPenalty=group_intercept_penalty,
+            varyingSmoothPenalty=varying_smooth_penalty,
+            shrinkageEnabled=shrinkage_enabled,
+        )
+
+
+class HGAMGroupEffectModel(
+    Transformer,
+    DefaultParamsReadable,
+    DefaultParamsWritable,
+):
+    """Apply the frozen HGAM group-effect representation."""
+
+    groupingFeature = Param(
+        Params._dummy(),
+        "groupingFeature",
+        "HGAM grouping feature.",
+        TypeConverters.toString,
+    )
+    groupDimension = Param(
+        Params._dummy(),
+        "groupDimension",
+        "Number of fitted encoded group dimensions.",
+        TypeConverters.toInt,
+    )
+    groupInterceptEnabled = Param(
+        Params._dummy(),
+        "groupInterceptEnabled",
+        "Whether group intercept deviations are included.",
+        TypeConverters.toBoolean,
+    )
+    varyingSmoothFeatures = Param(
+        Params._dummy(),
+        "varyingSmoothFeatures",
+        "HGAM varying smooth features.",
+        TypeConverters.toList,
+    )
+    varyingSmoothSizes = Param(
+        Params._dummy(),
+        "varyingSmoothSizes",
+        "JSON encoded fitted varying smooth sizes.",
+        TypeConverters.toString,
+    )
+    varyingRepresentations = Param(
+        Params._dummy(),
+        "varyingRepresentations",
+        "JSON encoded fitted linear/spline representations for varying features.",
+        TypeConverters.toString,
+    )
+    groupInterceptPenalty = Param(
+        Params._dummy(),
+        "groupInterceptPenalty",
+        "Relative group intercept shrinkage.",
+        TypeConverters.toFloat,
+    )
+    varyingSmoothPenalty = Param(
+        Params._dummy(),
+        "varyingSmoothPenalty",
+        "Relative varying smooth shrinkage.",
+        TypeConverters.toFloat,
+    )
+    shrinkageEnabled = Param(
+        Params._dummy(),
+        "shrinkageEnabled",
+        "Whether hierarchical feature scaling is enabled.",
+        TypeConverters.toBoolean,
+    )
+
+    @keyword_only
+    def __init__(
+        self,
+        groupingFeature: str = "",
+        groupDimension: int = 1,
+        groupInterceptEnabled: bool = True,
+        varyingSmoothFeatures: list[str] | None = None,
+        varyingSmoothSizes: str = "{}",
+        varyingRepresentations: str = "{}",
+        groupInterceptPenalty: float = 1.0,
+        varyingSmoothPenalty: float = 1.0,
+        shrinkageEnabled: bool = True,
+    ) -> None:
+        super().__init__()
+        self._setDefault(
+            groupingFeature="",
+            groupDimension=1,
+            groupInterceptEnabled=True,
+            varyingSmoothFeatures=[],
+            varyingSmoothSizes="{}",
+            varyingRepresentations="{}",
+            groupInterceptPenalty=1.0,
+            varyingSmoothPenalty=1.0,
+            shrinkageEnabled=True,
+        )
+        self.setParams(
+            groupingFeature=groupingFeature,
+            groupDimension=groupDimension,
+            groupInterceptEnabled=groupInterceptEnabled,
+            varyingSmoothFeatures=varyingSmoothFeatures or [],
+            varyingSmoothSizes=varyingSmoothSizes,
+            varyingRepresentations=varyingRepresentations,
+            groupInterceptPenalty=groupInterceptPenalty,
+            varyingSmoothPenalty=varyingSmoothPenalty,
+            shrinkageEnabled=shrinkageEnabled,
+        )
+
+    @keyword_only
+    def setParams(
+        self,
+        groupingFeature: str | None = None,
+        groupDimension: int = 1,
+        groupInterceptEnabled: bool = True,
+        varyingSmoothFeatures: list[str] | None = None,
+        varyingSmoothSizes: str = "{}",
+        varyingRepresentations: str = "{}",
+        groupInterceptPenalty: float = 1.0,
+        varyingSmoothPenalty: float = 1.0,
+        shrinkageEnabled: bool = True,
+    ) -> "HGAMGroupEffectModel":
+        return self._set(**self._input_kwargs)
+
+    @staticmethod
+    def _basis_columns(
+        dataset: DataFrame,
+        feature: str,
+    ) -> list[str]:
+        prefix = f"{feature}_spline_"
+        columns = [
+            column
+            for column in dataset.columns
+            if column.startswith(prefix)
+            and column[len(prefix):].isdigit()
+        ]
+        return sorted(
+            columns,
+            key=lambda column: int(column.rsplit("_", 1)[1]),
+        )
+
+    @staticmethod
+    def _hint_vector_size(
+        dataset: DataFrame,
+        column: str,
+        size: int,
+    ) -> DataFrame:
+        return VectorSizeHint(
+            inputCol=column,
+            size=int(size),
+            handleInvalid="error",
+        ).transform(dataset)
+
+    def _transform(self, dataset: DataFrame) -> DataFrame:
+        grouping_feature = self.getOrDefault(self.groupingFeature)
+        group_dimension = int(self.getOrDefault(self.groupDimension))
+        group_intercept_enabled = self.getOrDefault(
+            self.groupInterceptEnabled
+        )
+        varying_features = list(
+            self.getOrDefault(self.varyingSmoothFeatures)
+        )
+        varying_representations = json.loads(
+            self.getOrDefault(self.varyingRepresentations)
+        )
+        varying_sizes = json.loads(
+            self.getOrDefault(self.varyingSmoothSizes)
+        )
+        group_intercept_penalty = float(
+            self.getOrDefault(self.groupInterceptPenalty)
+        )
+        varying_smooth_penalty = float(
+            self.getOrDefault(self.varyingSmoothPenalty)
+        )
+        shrinkage_enabled = self.getOrDefault(self.shrinkageEnabled)
+
+        encoded_column = f"__encoded_{grouping_feature}"
+        if encoded_column not in dataset.columns:
+            raise ValueError(
+                f"HGAM encoded grouping column '{encoded_column}' is missing."
+            )
+
+        encoded = vector_to_array(F.col(encoded_column))
+        result = dataset
+
+        if group_intercept_enabled:
+            scale = (
+                1.0 / group_intercept_penalty
+                if shrinkage_enabled
+                else 1.0
+            )
+            terms = [
+                encoded.getItem(index) * F.lit(scale)
+                for index in range(group_dimension)
+            ]
+            output_column = "__hgam_group_intercept"
+            result = result.withColumn(
+                output_column,
+                array_to_vector(F.array(*terms)),
+            )
+            result = self._hint_vector_size(
+                result,
+                output_column,
+                group_dimension,
+            )
+
+        for feature in varying_features:
+            representation = varying_representations.get(feature)
+
+            if representation == "spline":
+                basis_columns = self._basis_columns(result, feature)
+                if not basis_columns:
+                    raise ValueError(
+                        f"Fitted HGAM representation for '{feature}' is spline, "
+                        "but its spline basis columns are missing."
+                    )
+                base_terms = [
+                    F.col(basis_column)
+                    for basis_column in basis_columns
+                ]
+
+            elif representation == "linear":
+                linear_column = f"__imputed_{feature}"
+                if linear_column not in result.columns:
+                    raise ValueError(
+                        f"Fitted HGAM representation for '{feature}' is linear, "
+                        f"but '{linear_column}' is missing."
+                    )
+                base_terms = [F.col(linear_column)]
+
+            else:
+                raise ValueError(
+                    f"Unsupported fitted HGAM representation for '{feature}': "
+                    f"{representation!r}."
+                )
+
+            scale = (
+                1.0 / varying_smooth_penalty
+                if shrinkage_enabled
+                else 1.0
+            )
+
+            terms = []
+            for group_index in range(group_dimension):
+                group_indicator = encoded.getItem(group_index)
+                for base_term in base_terms:
+                    terms.append(
+                        base_term
+                        * group_indicator
+                        * F.lit(scale)
+                    )
+
+            expected_size = int(varying_sizes.get(feature, len(terms)))
+            if len(terms) != expected_size:
+                raise ValueError(
+                    f"HGAM varying feature '{feature}' produced "
+                    f"{len(terms)} terms but fitted state expects "
+                    f"{expected_size}."
+                )
+
+            output_column = f"__hgam_smooth__{feature}"
+            result = result.withColumn(
+                output_column,
+                array_to_vector(F.array(*terms)),
+            )
+            result = self._hint_vector_size(
+                result,
+                output_column,
+                expected_size,
+            )
+
+        return result
+
+
+# ======================================================================
 # FINAL FEATURE ASSEMBLY
 # ======================================================================
 
@@ -2032,6 +2653,12 @@ class GAMFeatureAssemblyEstimator(
         "Fitted interaction vector columns in configured order.",
         TypeConverters.toList,
     )
+    hgamOutputCols = Param(
+        Params._dummy(),
+        "hgamOutputCols",
+        "Fitted HGAM hierarchical vector columns in configured order.",
+        TypeConverters.toList,
+    )
 
     @keyword_only
     def __init__(
@@ -2040,6 +2667,7 @@ class GAMFeatureAssemblyEstimator(
         categoricalFeatures: list[str] | None = None,
         engineeredFeatures: list[str] | None = None,
         interactionOutputCols: list[str] | None = None,
+        hgamOutputCols: list[str] | None = None,
     ) -> None:
         super().__init__()
         self._setDefault(
@@ -2047,12 +2675,14 @@ class GAMFeatureAssemblyEstimator(
             categoricalFeatures=[],
             engineeredFeatures=[],
             interactionOutputCols=[],
+            hgamOutputCols=[],
         )
         self.setParams(
             numericalFeatures=numericalFeatures or [],
             categoricalFeatures=categoricalFeatures or [],
             engineeredFeatures=engineeredFeatures or [],
             interactionOutputCols=interactionOutputCols or [],
+            hgamOutputCols=hgamOutputCols or [],
         )
 
     @keyword_only
@@ -2062,6 +2692,7 @@ class GAMFeatureAssemblyEstimator(
         categoricalFeatures: list[str] | None = None,
         engineeredFeatures: list[str] | None = None,
         interactionOutputCols: list[str] | None = None,
+        hgamOutputCols: list[str] | None = None,
     ) -> "GAMFeatureAssemblyEstimator":
         return self._set(**self._input_kwargs)
 
@@ -2095,6 +2726,9 @@ class GAMFeatureAssemblyEstimator(
         interaction_output_cols = list(
             self.getOrDefault(self.interactionOutputCols)
         )
+        hgam_output_cols = list(
+            self.getOrDefault(self.hgamOutputCols)
+        )
 
         model_features: list[str] = []
 
@@ -2113,12 +2747,26 @@ class GAMFeatureAssemblyEstimator(
                     f"__imputed_{feature}"
                 )
 
+        # In HGAM, a hierarchical group intercept represents the group
+        # effect itself. Do not also add the same encoded grouping variable
+        # as a global categorical main effect, otherwise the design matrix
+        # contains duplicate group columns. Other categorical features keep
+        # their existing GAM representation unchanged.
+        model_categorical_features = categorical_features
+
+        if hgam_output_cols and "__hgam_group_intercept" in hgam_output_cols:
+            # The pipeline has already removed the HGAM grouping feature from
+            # categoricalFeatures when a hierarchical intercept is enabled.
+            # Keep this check only as documentation of that invariant.
+            pass
+
         model_features.extend(
             f"__encoded_{feature}"
-            for feature in categorical_features
+            for feature in model_categorical_features
         )
         model_features.extend(engineered_features)
         model_features.extend(interaction_output_cols)
+        model_features.extend(hgam_output_cols)
 
         if not model_features:
             raise ValueError(
@@ -2214,52 +2862,32 @@ class GAMFeatureAssemblyModel(
 def build_gam_pipeline(
     config: dict,
 ) -> Pipeline:
-    """Build the complete representation-aware GAM V2 Spark Pipeline.
+    """Build the complete representation-aware GAM/HGAM Spark Pipeline.
 
-    Training-data screening is intentionally NOT a Pipeline stage.
-    ``train_gam_spark`` applies optional screening and class weighting to the
-    training DataFrame before fitting. This guarantees that validation and OOT
-    DataFrames are transformed at their full size by the persisted PipelineModel.
+    ``model_type: gam`` preserves the existing GAM path. ``model_type: hgam``
+    inserts the hierarchical group-effect stage after the existing spline and
+    interaction stages.
     """
 
     features = config["parameters"]["modelling"]["features"]
 
     numerical_features = list(
-        features.get(
-            "numerical_features",
-            [],
-        )
+        features.get("numerical_features", [])
     )
-
     categorical_features = list(
-        features.get(
-            "categorical_features",
-            [],
-        )
+        features.get("categorical_features", [])
     )
-
     engineered_features = list(
-        features.get(
-            "engineered_features",
-            [],
-        )
+        features.get("engineered_features", [])
     )
 
-    spline_features, _, _, _ = _get_gam_feature_groups(
-        config
-    )
+    gam_config = config["parameters"]["modelling"]["gam"]
+    model_type = _get_gam_model_type(config)
 
-    gam_config = (
-        config["parameters"]
-        ["modelling"]
-        ["gam"]
-    )
-
+    spline_features, _, _, _ = _get_gam_feature_groups(config)
     spline_config = gam_config["spline"]
 
-    stages: list[Any] = _build_gam_preparation_stages(
-        config
-    )
+    stages: list[Any] = _build_gam_preparation_stages(config)
 
     stages.append(
         GAMSplineEstimator(
@@ -2269,10 +2897,7 @@ def build_gam_pipeline(
         )
     )
 
-    interaction_specs = _get_gam_interaction_specs(
-        config
-    )
-
+    interaction_specs = _get_gam_interaction_specs(config)
     interaction_output_cols = [
         f"__interaction__{spec.left}__{spec.right}"
         for spec in interaction_specs
@@ -2289,18 +2914,89 @@ def build_gam_pipeline(
             )
         )
 
+    # --------------------------------------------------------------
+    # Optional HGAM extension
+    # --------------------------------------------------------------
+
+    hgam_output_cols: list[str] = []
+
+    if model_type == "hgam":
+        hgam_config = _get_hgam_config(config)
+
+        grouping_feature = hgam_config["grouping"]["feature"]
+        intercept_config = hgam_config.get("intercept", {})
+        varying_config = hgam_config.get("varying_smooths", {})
+        shrinkage_config = hgam_config.get("shrinkage", {})
+
+        group_intercept_enabled = bool(
+            intercept_config.get("enabled", True)
+        )
+        varying_features = (
+            list(varying_config.get("features", []))
+            if varying_config.get("enabled", False)
+            else []
+        )
+        shrinkage_enabled = bool(
+            shrinkage_config.get("enabled", True)
+        )
+        group_intercept_penalty = float(
+            shrinkage_config.get("group_intercept_penalty", 1.0)
+        )
+        varying_smooth_penalty = float(
+            shrinkage_config.get("varying_smooth_penalty", 1.0)
+        )
+
+        if group_intercept_enabled:
+            hgam_output_cols.append(
+                "__hgam_group_intercept"
+            )
+
+        hgam_output_cols.extend(
+            f"__hgam_smooth__{feature}"
+            for feature in varying_features
+        )
+
+        if group_intercept_enabled or varying_features:
+            stages.append(
+                HGAMGroupEffectEstimator(
+                    groupingFeature=grouping_feature,
+                    groupInterceptEnabled=group_intercept_enabled,
+                    varyingSmoothFeatures=varying_features,
+                    groupInterceptPenalty=group_intercept_penalty,
+                    varyingSmoothPenalty=varying_smooth_penalty,
+                    shrinkageEnabled=shrinkage_enabled,
+                )
+            )
+
+    # --------------------------------------------------------------
+    # Final feature assembly
+    # --------------------------------------------------------------
+
     stages.append(
         GAMFeatureAssemblyEstimator(
             numericalFeatures=numerical_features,
-            categoricalFeatures=categorical_features,
+            categoricalFeatures=(
+                [
+                    feature
+                    for feature in categorical_features
+                    if not (
+                        model_type == "hgam"
+                        and "__hgam_group_intercept" in hgam_output_cols
+                        and feature == hgam_config["grouping"]["feature"]
+                    )
+                ]
+                if model_type == "hgam"
+                else categorical_features
+            ),
             engineeredFeatures=engineered_features,
             interactionOutputCols=interaction_output_cols,
+            hgamOutputCols=hgam_output_cols,
         )
     )
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
     # Logistic regression / configurable class weighting
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
 
     weighting_config = gam_config.get(
         "class_weighting",
@@ -2312,13 +3008,19 @@ def build_gam_pipeline(
         "labelCol": "label",
     }
 
-    if weighting_config.get(
-        "enabled",
-        False,
-    ):
-        logistic_regression_kwargs["weightCol"] = (
-            "__class_weight__"
+    if weighting_config.get("enabled", False):
+        logistic_regression_kwargs["weightCol"] = "__class_weight__"
+
+    if model_type == "hgam":
+        hgam_config = _get_hgam_config(config)
+        regularization_config = hgam_config.get(
+            "regularization",
+            {},
         )
+        logistic_regression_kwargs["regParam"] = float(
+            regularization_config.get("reg_param", 0.01)
+        )
+        logistic_regression_kwargs["elasticNetParam"] = 0.0
 
     stages.append(
         LogisticRegression(
@@ -2326,9 +3028,8 @@ def build_gam_pipeline(
         )
     )
 
-    return Pipeline(
-        stages=stages
-    )
+    return Pipeline(stages=stages)
+
 def train_gam_spark(
     training_df: DataFrame,
     config: dict,
