@@ -93,3 +93,8 @@ catalog:
     folder_name: "06_reporting/data_quality"
     file_name: "distributions"
     file_type: "pdf"
+
+  early_intervention_output:
+    folder_name: "03_processed/early_intervention"
+    file_name: "scores"
+    file_type: "parquet"

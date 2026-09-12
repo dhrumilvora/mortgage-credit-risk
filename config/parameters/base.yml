@@ -52,7 +52,7 @@ parameters:
     - 2021
     - 2022
 
-    quarters: ["Q1", "Q2", "Q3", "Q4"]
+    quarters: [ "Q1", "Q2", "Q3", "Q4" ]
     id_col: "loan_id"
     time: "period"
 
@@ -70,10 +70,10 @@ parameters:
       macro-economic:
         enabled: true
         features:
-          - unemployment_rate
-          - mortgage_rate_30y
-          - hpi_purchase_only
-          - fed_funds_rate
+        - unemployment_rate
+        - mortgage_rate_30y
+        - hpi_purchase_only
+        - fed_funds_rate
 
       performance_batch_size: 100000
 
@@ -90,29 +90,28 @@ parameters:
         # --------------------------------------------------------
 
         numerical_features:
-          - credit_score
-          - original_dti
-          - number_of_borrowers
-          - original_ltv
-          - original_cltv
-          - mi_percentage
-          - original_upb
-          - original_interest_rate
-          - original_loan_term
-
+        - credit_score
+        - original_dti
+        - number_of_borrowers
+        - original_ltv
+        - original_cltv
+        - mi_percentage
+        - original_upb
+        - original_interest_rate
+        - original_loan_term
         # --------------------------------------------------------
         # Origination categorical features
         # --------------------------------------------------------
 
         categorical_features:
-          - first_time_homebuyer_flag
-          - property_type
-          - occupancy_status
-          - loan_purpose
-          - channel
-          - super_conforming_flag
-          - harp_indicator
-          - property_state
+        - first_time_homebuyer_flag
+        - property_type
+        - occupancy_status
+        - loan_purpose
+        - channel
+        - super_conforming_flag
+        - harp_indicator
+        - property_state
 
   # ============================================================
   # MODELLING
@@ -128,19 +127,18 @@ parameters:
     # ----------------------------------------------------------
 
     vintages_train:
-      - 2015
-      - 2016
-      - 2017
-      - 2018
-      - 2019
-      - 2020
+    - 2015
+    - 2016
+    - 2017
+    - 2018
+    - 2019
+    - 2020
 
     vintages_test:
-      - 2021
+    - 2021
 
     vintages_oot:
-      - 2022
-
+    - 2022
     # ----------------------------------------------------------
     # Validation
     # ----------------------------------------------------------
@@ -221,7 +219,6 @@ parameters:
       # ==========================================================
       model_type: hgam
 
-
       # ==========================================================
       # Class weighting
       # ==========================================================
@@ -229,7 +226,6 @@ parameters:
         enabled: false
         positive_weight: 2.0
         negative_weight: 1.0
-
 
       # ==========================================================
       # Spline configuration
@@ -239,14 +235,12 @@ parameters:
         num_knots: 6
         knot_strategy: quantile
 
-
       # ==========================================================
       # Experimental / screening configuration
       # ==========================================================
       experiment:
         screening_sample_fraction: 0.10
         screening_seed: 42
-
 
       # ==========================================================
       # Feature transformations
@@ -265,49 +259,48 @@ parameters:
 
         spline:
 
-          # ------------------------------------------------------
-          # Structural / borrower risk
-          # ------------------------------------------------------
-          - credit_score
-          - original_dti
-          - original_ltv
-          - original_cltv
-          - estimated_ltv
+        # ------------------------------------------------------
+        # Structural / borrower risk
+        # ------------------------------------------------------
+        - credit_score
+        - original_dti
+        - original_ltv
+        - original_cltv
+        - estimated_ltv
 
-          # ------------------------------------------------------
-          # Loan economics
-          # ------------------------------------------------------
-          - current_interest_rate
-          - current_actual_upb
-          - remaining_months_to_legal_maturity
-          - rate_change_from_origination
+        # ------------------------------------------------------
+        # Loan economics
+        # ------------------------------------------------------
+        - current_interest_rate
+        - current_actual_upb
+        - remaining_months_to_legal_maturity
+        - rate_change_from_origination
 
-          # ------------------------------------------------------
-          # Behavioural trajectory
-          # ------------------------------------------------------
-          - dpd_trend_6m
-          - dpd_acceleration_6m
-          - dpd_severity_change_6m
+        # ------------------------------------------------------
+        # Behavioural trajectory
+        # ------------------------------------------------------
+        - dpd_trend_6m
+        - dpd_acceleration_6m
+        - dpd_severity_change_6m
 
-          # ------------------------------------------------------
-          # Additional behavioural shape
-          # ------------------------------------------------------
-          - current_delinquency_streak
-          - max_delinquency_streak_12m
-          - months_since_last_30dpd
-          - months_since_last_60dpd
-          - delinquency_intensity_change_6m
+        # ------------------------------------------------------
+        # Additional behavioural shape
+        # ------------------------------------------------------
+        - current_delinquency_streak
+        - max_delinquency_streak_12m
+        - months_since_last_30dpd
+        - months_since_last_60dpd
+        - delinquency_intensity_change_6m
 
-          # ------------------------------------------------------
-          # Macro-economic factors
-          #
-          # These are nonlinear candidates in V4.
-          # ------------------------------------------------------
-          - unemployment_rate
-          - mortgage_rate_30y
-          - hpi_purchase_only
-          - fed_funds_rate
-
+        # ------------------------------------------------------
+        # Macro-economic factors
+        #
+        # These are nonlinear candidates in V4.
+        # ------------------------------------------------------
+        - unemployment_rate
+        - mortgage_rate_30y
+        - hpi_purchase_only
+        - fed_funds_rate
 
       # ==========================================================
       # Explicit interactions
@@ -317,54 +310,53 @@ parameters:
 
         pairs:
 
-          # ------------------------------------------------------
-          # Existing structural / behavioural interactions
-          # ------------------------------------------------------
-          - [credit_score, estimated_ltv]
-          - [credit_score, modification_flag]
-          - [estimated_ltv, occupancy_status]
-          - [dpd_trend_6m, property_type]
-          - [dpd_trend_6m, dpd_acceleration_6m]
+        # ------------------------------------------------------
+        # Existing structural / behavioural interactions
+        # ------------------------------------------------------
+        - [ credit_score, estimated_ltv ]
+        - [ credit_score, modification_flag ]
+        - [ estimated_ltv, occupancy_status ]
+        - [ dpd_trend_6m, property_type ]
+        - [ dpd_trend_6m, dpd_acceleration_6m ]
 
-          # ------------------------------------------------------
-          # Affordability / borrower quality
-          # ------------------------------------------------------
-          - [original_dti, credit_score]
+        # ------------------------------------------------------
+        # Affordability / borrower quality
+        # ------------------------------------------------------
+        - [ original_dti, credit_score ]
 
-          # ------------------------------------------------------
-          # Behavioural deterioration × exposure
-          # ------------------------------------------------------
-          - [dpd_trend_6m, estimated_ltv]
-          - [dpd_acceleration_6m, estimated_ltv]
+        # ------------------------------------------------------
+        # Behavioural deterioration × exposure
+        # ------------------------------------------------------
+        - [ dpd_trend_6m, estimated_ltv ]
+        - [ dpd_acceleration_6m, estimated_ltv ]
 
-          # ------------------------------------------------------
-          # Structural × behavioural block
-          # ------------------------------------------------------
-          - [dpd_trend_6m, credit_score]
-          - [dpd_acceleration_6m, credit_score]
-          - [dpd_severity_change_6m, credit_score]
-          - [delinquency_intensity_change_6m, credit_score]
+        # ------------------------------------------------------
+        # Structural × behavioural block
+        # ------------------------------------------------------
+        - [ dpd_trend_6m, credit_score ]
+        - [ dpd_acceleration_6m, credit_score ]
+        - [ dpd_severity_change_6m, credit_score ]
+        - [ delinquency_intensity_change_6m, credit_score ]
 
-          # ------------------------------------------------------
-          # Behavioural deterioration × exposure
-          # ------------------------------------------------------
-          - [dpd_severity_change_6m, estimated_ltv]
-          - [delinquency_intensity_change_6m, estimated_ltv]
-          - [current_delinquency_streak, estimated_ltv]
+        # ------------------------------------------------------
+        # Behavioural deterioration × exposure
+        # ------------------------------------------------------
+        - [ dpd_severity_change_6m, estimated_ltv ]
+        - [ delinquency_intensity_change_6m, estimated_ltv ]
+        - [ current_delinquency_streak, estimated_ltv ]
 
-          # ------------------------------------------------------
-          # Affordability × collateral / borrower quality
-          # ------------------------------------------------------
-          - [original_dti, estimated_ltv]
-          - [original_dti, original_ltv]
+        # ------------------------------------------------------
+        # Affordability × collateral / borrower quality
+        # ------------------------------------------------------
+        - [ original_dti, estimated_ltv ]
+        - [ original_dti, original_ltv ]
 
-          # ------------------------------------------------------
-          # Rate pressure × affordability / exposure
-          # ------------------------------------------------------
-          - [current_interest_rate, original_dti]
-          - [rate_change_from_origination, original_dti]
-          - [rate_change_from_origination, estimated_ltv]
-
+        # ------------------------------------------------------
+        # Rate pressure × affordability / exposure
+        # ------------------------------------------------------
+        - [ current_interest_rate, original_dti ]
+        - [ rate_change_from_origination, original_dti ]
+        - [ rate_change_from_origination, estimated_ltv ]
 
       # ==========================================================
       # Hierarchical GAM (HGAM)
@@ -389,7 +381,6 @@ parameters:
         grouping:
           feature: property_state
 
-
         # --------------------------------------------------------
         # Hierarchical group intercept
         #
@@ -400,7 +391,6 @@ parameters:
         # --------------------------------------------------------
         intercept:
           enabled: true
-
 
         # --------------------------------------------------------
         # Group-varying smooths
@@ -415,13 +405,13 @@ parameters:
           enabled: true
 
           features:
-            - dpd_trend_6m
-            - dpd_acceleration_6m
-            - dpd_severity_change_6m
-            - delinquency_intensity_change_6m
-            - estimated_ltv
-            - rate_change_from_origination
-            - credit_score
+          - dpd_trend_6m
+          - dpd_acceleration_6m
+          - dpd_severity_change_6m
+          - delinquency_intensity_change_6m
+          - estimated_ltv
+          - rate_change_from_origination
+          - credit_score
 
         # --------------------------------------------------------
         # Hierarchical shrinkage
@@ -434,7 +424,6 @@ parameters:
           enabled: true
           group_intercept_penalty: 1.0
           varying_smooth_penalty: 1.0
-
 
   # ============================================================
   # COMMON TARGET DEFINITIONS
@@ -452,10 +441,10 @@ parameters:
 
   evaluation:
     skip: false
-    grain: point_in_time   # point_in_time | loan_level
+    grain: point_in_time # point_in_time | loan_level
     loan_level:
-     probability_aggregation: max
-     target_aggregation: max
+      probability_aggregation: max
+      target_aggregation: max
     # existing_model = evaluate an already persisted model
     # same_run      = evaluate the model produced in this run
     mode: same_run
@@ -467,7 +456,7 @@ parameters:
     threshold_selection:
       enabled: true
       optimisation_metric: f1
-      candidate_thresholds_range: [0.01, 0.5]
+      candidate_thresholds_range: [ 0.01, 0.5 ]
       candidate_thresholds_step: 0.01
 
     datasets:
@@ -498,10 +487,14 @@ parameters:
     calibration:
       method: platt
       bins:
-        - [0.00, 0.01]
-        - [0.01, 0.02]
-        - [0.02, 0.05]
-        - [0.05, 0.10]
-        - [0.10, 0.20]
-        - [0.20, 0.50]
-        - [0.50, 1.00]
+      - [ 0.00, 0.01 ]
+      - [ 0.01, 0.02 ]
+      - [ 0.02, 0.05 ]
+      - [ 0.05, 0.10 ]
+      - [ 0.10, 0.20 ]
+      - [ 0.20, 0.50 ]
+      - [ 0.50, 1.00 ]
+
+  early_intervention:
+    skip: false
+    threshold: 0.05
