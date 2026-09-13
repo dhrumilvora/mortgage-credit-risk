@@ -7,13 +7,13 @@ from pyspark.sql import DataFrame, SparkSession
 
 from credit_risk.utils.config import create_path
 
-from early_intervention.flagger import (
+from credit_risk.early_intervention.flagger import (
     build_early_intervention_flags,
 )
-from early_intervention.ranker import (
+from credit_risk.early_intervention.ranker import (
     rank_early_intervention_population,
 )
-from early_intervention.scoring import (
+from credit_risk.early_intervention.scoring import (
     score_early_intervention_population,
 )
 
